@@ -7,6 +7,7 @@ const nextConfig = {
     "@breakguard/lockfile-parser",
     "@breakguard/risk-engine"
   ],
+  turbopack: {},
   webpack: (config) => {
     config.externals = [...(config.externals || []), "@swc/core"];
     return config;

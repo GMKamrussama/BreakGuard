@@ -30,55 +30,65 @@ export function parsePnpmLockfile(
   const nodes: Record<string, DependencyNode> = {};
   const lockfileVersion = parsed?.lockfileVersion ?? 5;
 
-  // Direct dependencies defined in pnpm lockfile
-  // In v5: root 'dependencies' and 'devDependencies'
-  // In v6/v9: 'importers' -> '.' -> 'dependencies' & 'devDependencies'
-  const rootImporter = parsed?.importers?.["."] || parsed;
-  const lockDirectDeps = (rootImporter?.dependencies as Record<string, any>) || {};
-  const lockDirectDevDeps = (rootImporter?.devDependencies as Record<string, any>) || {};
+  // Direct dependencies defined in pnpm lockfile across all workspace importers
+  const importerEntries = parsed?.importers
+    ? Object.entries(parsed.importers)
+    : [["root", parsed]];
 
-  // Register direct packages from lockfile
-  for (const [name, val] of Object.entries(lockDirectDeps)) {
-    const version = typeof val === "string" ? val.replace(/^\/?.*@/, "") : val?.version || "unknown";
-    nodes[name] = {
-      id: `${name}@${version}`,
-      name,
-      version,
-      requestedRange: directDeps[name] || "*",
-      category: "dependencies",
-      isTransitive: false,
-      depth: 1,
-      parents: [],
-      dependencies: {},
-    };
-  }
+  for (const [importerPath, importerData] of importerEntries) {
+    if (!importerData || typeof importerData !== "object") continue;
+    const iData = importerData as Record<string, any>;
+    const iDeps = (iData.dependencies as Record<string, any>) || {};
+    const iDevDeps = (iData.devDependencies as Record<string, any>) || {};
 
-  for (const [name, val] of Object.entries(lockDirectDevDeps)) {
-    const version = typeof val === "string" ? val.replace(/^\/?.*@/, "") : val?.version || "unknown";
-    if (!nodes[name]) {
-      nodes[name] = {
-        id: `${name}@${version}`,
-        name,
-        version,
-        requestedRange: directDevDeps[name] || "*",
-        category: "devDependencies",
-        isTransitive: false,
-        depth: 1,
-        parents: [],
-        dependencies: {},
-      };
+    for (const [name, val] of Object.entries(iDeps)) {
+      const versionStr = typeof val === "string" ? val : val?.version || "";
+      if (versionStr.startsWith("link:") || versionStr.startsWith("workspace:")) continue;
+      const version = typeof val === "string" ? val.replace(/^\/?.*@/, "") : val?.version || "unknown";
+      if (!nodes[name]) {
+        nodes[name] = {
+          id: `${name}@${version}`,
+          name,
+          version,
+          requestedRange: directDeps[name] || "*",
+          category: "dependencies",
+          isTransitive: false,
+          depth: 1,
+          parents: [],
+          dependencies: {},
+        };
+      }
+    }
+
+    for (const [name, val] of Object.entries(iDevDeps)) {
+      const versionStr = typeof val === "string" ? val : val?.version || "";
+      if (versionStr.startsWith("link:") || versionStr.startsWith("workspace:")) continue;
+      const version = typeof val === "string" ? val.replace(/^\/?.*@/, "") : val?.version || "unknown";
+      if (!nodes[name]) {
+        nodes[name] = {
+          id: `${name}@${version}`,
+          name,
+          version,
+          requestedRange: directDevDeps[name] || "*",
+          category: "devDependencies",
+          isTransitive: false,
+          depth: 1,
+          parents: [],
+          dependencies: {},
+        };
+      }
     }
   }
 
-  // Parse transitive packages from 'packages' section
-  const packagesMap = parsed?.packages || {};
-  for (const [pkgKey, pkgData] of Object.entries(packagesMap)) {
-    if (!pkgData || typeof pkgData !== "object") continue;
+  // Parse packages and v9 snapshots section for complete dependency links
+  const packagesMap = (parsed?.packages as Record<string, any>) || {};
+  const snapshotsMap = (parsed?.snapshots as Record<string, any>) || {};
+  const allPkgKeys = new Set([...Object.keys(packagesMap), ...Object.keys(snapshotsMap)]);
 
-    // pkgKey formats:
-    // v5: "/lodash/4.17.21" or "/@scope/name/1.0.0"
-    // v6: "/lodash@4.17.21" or "/@scope/name@1.0.0"
-    // v9: "lodash@4.17.21" or "@scope/name@1.0.0"
+  for (const pkgKey of allPkgKeys) {
+    const pkgData = packagesMap[pkgKey] || {};
+    const snapshotData = snapshotsMap[pkgKey] || {};
+
     let cleanKey = pkgKey.replace(/^\//, "");
     let pkgName = "";
     let version = "";
@@ -99,15 +109,27 @@ export function parsePnpmLockfile(
       version = version.split("(")[0];
     }
 
-    const isDirect = directNames.has(pkgName) || !!nodes[pkgName];
+    const isDirect = directNames.has(pkgName) || (nodes[pkgName] && !nodes[pkgName].isTransitive);
     let category: DependencyCategory = isDirect
-      ? (directDevDeps[pkgName] ? "devDependencies" : "dependencies")
+      ? (directDevDeps[pkgName] || (nodes[pkgName]?.category === "devDependencies") ? "devDependencies" : "dependencies")
       : "transitive";
 
-    const subDeps: Record<string, string> = {
-      ...((pkgData as any).dependencies || {}),
-      ...((pkgData as any).optionalDependencies || {}),
+    const subDeps: Record<string, string> = {};
+    const rawDeps = {
+      ...(pkgData.dependencies || {}),
+      ...(pkgData.optionalDependencies || {}),
+      ...(snapshotData.dependencies || {}),
+      ...(snapshotData.optionalDependencies || {}),
     };
+
+    for (const [depKey, depVer] of Object.entries(rawDeps)) {
+      const cleanDepName = depKey.trim();
+      let cleanDepVer = typeof depVer === "string" ? depVer : String(depVer || "unknown");
+      if (cleanDepVer.includes("(")) {
+        cleanDepVer = cleanDepVer.split("(")[0];
+      }
+      subDeps[cleanDepName] = cleanDepVer;
+    }
 
     if (!nodes[pkgName]) {
       nodes[pkgName] = {
@@ -122,11 +144,14 @@ export function parsePnpmLockfile(
         dependencies: subDeps,
       };
     } else {
-      // Update subDeps if missing
       nodes[pkgName].dependencies = {
         ...nodes[pkgName].dependencies,
         ...subDeps,
       };
+      if (isDirect) {
+        nodes[pkgName].isTransitive = false;
+        nodes[pkgName].depth = 1;
+      }
     }
   }
 

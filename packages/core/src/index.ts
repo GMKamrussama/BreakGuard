@@ -22,6 +22,7 @@ export * from "./github";
 export interface AnalyzeOptions {
   onProgress?: (step: string) => void;
   enrichRegistry?: boolean;
+  excludePatterns?: string[];
 }
 
 /**
@@ -68,9 +69,14 @@ export async function analyzeProject(
   });
 
   options.onProgress?.("Scanning codebase with SWC AST parser...");
+  const defaultIgnore = ["**/node_modules/**", "**/dist/**", "**/.next/**", "**/build/**", "**/.git/**", "**/out/**", "**/coverage/**"];
+  const finalIgnore = options.excludePatterns && options.excludePatterns.length > 0
+    ? [...defaultIgnore, ...options.excludePatterns.map(p => p.includes("*") ? p : `**/${p}/**`)]
+    : defaultIgnore;
+
   const codeFiles = await glob(["**/*.{js,jsx,ts,tsx,mjs,cjs}"], {
     cwd: resolvedDir,
-    ignore: ["**/node_modules/**", "**/dist/**", "**/.next/**", "**/build/**", "**/.git/**", "**/out/**"],
+    ignore: finalIgnore,
     absolute: true,
   });
 
@@ -115,11 +121,20 @@ export async function analyzeProject(
   let deprecatedCount = 0;
   let vulnerableCount = 0;
 
-  for (const name of tree.directDependencyNames) {
-    const node = tree.nodes[name];
+  for (const [name, node] of Object.entries(tree.nodes)) {
     if (!node) continue;
 
-    node.astUsage = astScan.packageUsages[name];
+    node.astUsage = astScan.packageUsages[name] || {
+      packageName: name,
+      isUsed: false,
+      isGhostDependency: false,
+      isUnusedDependency: false,
+      totalFilesCount: 0,
+      totalCallSites: 0,
+      files: [],
+      importedSymbols: [],
+    };
+
     const risk = calculateBreakingRiskScore({
       packageName: node.name,
       currentVersion: node.version,
@@ -131,14 +146,16 @@ export async function analyzeProject(
     });
 
     node.risk = risk;
-    totalScore += risk.score;
 
-    if (risk.level === "SAFE") safeCount++;
-    else if (risk.level === "MODERATE") moderateCount++;
-    else breakingWarningCount++;
+    if (!node.isTransitive) {
+      totalScore += risk.score;
+      if (risk.level === "SAFE") safeCount++;
+      else if (risk.level === "MODERATE") moderateCount++;
+      else breakingWarningCount++;
 
-    if (node.isDeprecated) deprecatedCount++;
-    if (node.vulnerabilities && node.vulnerabilities.length > 0) vulnerableCount++;
+      if (node.isDeprecated) deprecatedCount++;
+      if (node.vulnerabilities && node.vulnerabilities.length > 0) vulnerableCount++;
+    }
   }
 
   const directCount = tree.directDependenciesCount || 1;
