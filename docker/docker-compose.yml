@@ -1,0 +1,16 @@
+services:
+  breakguard-sandbox:
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    container_name: breakguard-ephemeral-runner
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2048M

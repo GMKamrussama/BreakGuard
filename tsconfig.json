@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [],
+  "references": [
+    { "path": "./packages/core-types" },
+    { "path": "./packages/lockfile-parser" },
+    { "path": "./packages/ast-scanner" },
+    { "path": "./packages/risk-engine" },
+    { "path": "./packages/cli" },
+    { "path": "./apps/web" }
+  ]
+}
