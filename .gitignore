@@ -16,3 +16,7 @@ build
 Thumbs.db
 *.log
 .env*.local
+
+# Tauri Rust build outputs
+src-tauri/target
+target/

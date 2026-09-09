@@ -6,11 +6,26 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
 [![Next.js](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org/)
 [![SWC](https://img.shields.io/badge/Parser-SWC-orange.svg)](https://swc.rs/)
+[![Tauri](https://img.shields.io/badge/Desktop-Tauri_v2-24c8db.svg)](https://tauri.app/)
+[![Bun](https://img.shields.io/badge/Standalone_Binary-Bun_x64-fbf0df.svg)](https://bun.sh/)
 [![Turborepo](https://img.shields.io/badge/Monorepo-Turborepo-ef4444.svg)](https://turbo.build/)
 
 BreakGuard solves the biggest blind spot in JavaScript maintenance: **Upgrading dependencies blindly without knowing if your actual codebase breaks.**
 
 Unlike standard vulnerability auditors, BreakGuard uses high-speed Abstract Syntax Tree (AST) parsing to map imported identifiers against SemVer updates and deprecation lifecycle data.
+
+---
+
+### Three Unified Distribution Targets
+
+BreakGuard is engineered with a modular, scoped architecture offering 3 distinct runtime targets powered by the same shared core engine (`@breakguard/core`):
+
+1. **Global Terminal CLI (`packages/cli`):** Fast, zero-fluff CLI with loading spinners (`ora`), colored badges (`chalk`), and command routing (`commander`):
+   - `breakguard scan [path]`: Summary Table, Deprecations, and Risky packages with local file paths & line numbers.
+   - `breakguard tree [path]`: ASCII terminal visual tree with risk-colored nodes.
+   - `breakguard audit [path] --json`: Structured JSON output for CI/CD pipelines.
+2. **Zero-Dependency Standalone Binary (`breakguard.exe`):** Compiled via Bun native compiler into a standalone single-file Windows binary without requiring Node.js on host systems.
+3. **Interactive Visual Dashboard & Desktop GUI (`apps/web` & `apps/desktop`):** Next.js 15 web app and lightweight Tauri v2 desktop GUI with `@xyflow/react` dependency graphs, side drawer inspectors, and ephemeral sandbox verification.
 
 ---
 
@@ -38,7 +53,10 @@ Unlike standard vulnerability auditors, BreakGuard uses high-speed Abstract Synt
 [npm Registry & OSV.dev] ───────> [Composite Risk Scorer Engine (0-100)]
 │
 ▼
-[Interactive React Flow UI & CLI Runner]
+┌───────────────────────────────┬───────────────────────────────┬───────────────────────────────┐
+│         Target 1: CLI         │    Target 2: Standalone .exe  │   Target 3: Desktop & Web UI  │
+│  npx breakguard scan / tree   │      dist/breakguard.exe      │    Next.js 15 & Tauri v2 GUI  │
+└───────────────────────────────┴───────────────────────────────┴───────────────────────────────┘
 ```
 
 ---
@@ -48,62 +66,59 @@ Unlike standard vulnerability auditors, BreakGuard uses high-speed Abstract Synt
 ```text
 breakguard/
 ├── apps/
-│   └── web/                     # Next.js 15+ Dashboard & React Flow Interactive UI
-│       ├── app/                 # App Router (Dashboard, Analyze API route)
-│       ├── components/graph/    # React Flow custom node & interactive graph
-│       ├── components/drawer/   # Package inspector & AST call site drawer
-│       ├── components/sandbox/  # Ephemeral sandbox runner modal
-│       └── components/upload/   # Repo selector & code scanner modal
+│   ├── web/                     # Next.js 15+ App Router Web Dashboard
+│   └── desktop/                 # Desktop GUI using Tauri v2 & React Flow
 ├── packages/
+│   ├── core/                    # Unified engine uniting AST, lockfiles, & risk scoring
 │   ├── ast-scanner/             # SWC AST visitor & code usage scanner
 │   ├── lockfile-parser/         # Deep parser for npm, yarn, and pnpm lockfiles
 │   ├── risk-engine/             # Pure functional composite breaking risk calculator
 │   ├── core-types/              # Shared TypeScript interfaces & Zod schemas
-│   └── cli/                     # CLI audit executable (breakguard audit .)
+│   └── cli/                     # CLI tool (Commander.js + Chalk + Ora)
+├── scripts/
+│   └── build-exe.ts             # Bun compile script generating standalone breakguard.exe
+├── dist/                        # Standalone binary artifacts (breakguard.exe)
 ├── docker/                      # Ephemeral sandbox runner container definitions
 └── turbo.json                   # Turborepo task pipeline
 ```
 
 ---
 
-### Quick Start (Local Setup)
+### Quick Start & Commands
 
+#### 1. Running the CLI
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/breakguard.git
+# Scan current directory
+node packages/cli/bin/breakguard.js scan .
 
-# Navigate to directory
-cd breakguard
+# Render visual terminal ASCII dependency tree
+node packages/cli/bin/breakguard.js tree .
 
-# Install dependencies across all monorepo workspaces
-pnpm install
-
-# Run all test suites
-pnpm test
-
-# Launch the interactive web dashboard
-pnpm dev
+# Run CI/CD audit with JSON output
+node packages/cli/bin/breakguard.js audit . --json
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser to view the BreakGuard dashboard.
-
----
-
-### CLI Usage
-
-You can also run BreakGuard directly in any project folder:
-
+#### 2. Compiling the Standalone .exe Binary
 ```bash
-# Audit current directory
-pnpm --filter breakguard build
-node packages/cli/dist/index.js audit .
+# Compile breakguard.exe using Bun
+pnpm build:exe
 
-# Output JSON report for CI/CD pipelines
-node packages/cli/dist/index.js audit . --json
+# Run the compiled binary directly in Windows CMD/PowerShell (Zero Node.js required):
+./dist/breakguard.exe scan .
+./dist/breakguard.exe tree .
+```
+
+#### 3. Web Dashboard & Desktop GUI
+```bash
+# Launch Next.js 15 Web Dashboard (http://localhost:3000)
+pnpm dev
+
+# Build the desktop GUI bundle
+pnpm desktop:build
 ```
 
 ---
 
 ### GitHub Topics for SEO
 
-`dependency-analyzer`, `ast-parser`, `swc`, `breaking-changes`, `package-json`, `semver-checker`, `nextjs`, `react-flow`, `developer-tools`, `typescript`
+`dependency-analyzer`, `ast-parser`, `swc`, `breaking-changes`, `package-json`, `semver-checker`, `nextjs`, `react-flow`, `developer-tools`, `typescript`, `tauri`, `bun-compile`, `cli`

@@ -1,7 +1,7 @@
 {
-  "name": "@breakguard/lockfile-parser",
+  "name": "@breakguard/core",
   "version": "1.0.0",
-  "description": "Deep lockfile parser for npm, Yarn, and pnpm with transitive dependency resolution",
+  "description": "Unified core engine for BreakGuard: AST scanning, lockfile parsing, and risk calculations",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -15,18 +15,19 @@
     "build": "tsup src/index.ts --format esm,cjs --dts",
     "dev": "tsup src/index.ts --format esm,cjs --dts --watch",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
     "clean": "rimraf dist"
   },
   "dependencies": {
+    "@breakguard/ast-scanner": "workspace:*",
     "@breakguard/core-types": "workspace:*",
-    "yaml": "^2.7.0"
+    "@breakguard/lockfile-parser": "workspace:*",
+    "@breakguard/risk-engine": "workspace:*",
+    "tinyglobby": "^0.2.12"
   },
   "devDependencies": {
     "@types/node": "^22.13.9",
     "rimraf": "^6.0.1",
     "tsup": "^8.4.0",
-    "typescript": "^5.8.2",
-    "vitest": "^3.0.7"
+    "typescript": "^5.8.2"
   }
 }

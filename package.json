@@ -9,9 +9,16 @@
     "lint": "turbo lint",
     "test": "turbo test",
     "typecheck": "turbo typecheck",
-    "clean": "turbo clean"
+    "clean": "turbo clean",
+    "build:exe": "bun run scripts/build-exe.ts",
+    "desktop:dev": "pnpm --filter @breakguard/desktop dev",
+    "desktop:build": "pnpm --filter @breakguard/desktop build",
+    "cli:scan": "node packages/cli/bin/breakguard.js scan",
+    "cli:tree": "node packages/cli/bin/breakguard.js tree",
+    "cli:audit": "node packages/cli/bin/breakguard.js audit"
   },
   "devDependencies": {
+    "@types/node": "^22.13.9",
     "turbo": "^2.4.4",
     "typescript": "^5.8.2"
   },

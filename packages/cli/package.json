@@ -1,25 +1,24 @@
 {
   "name": "breakguard",
   "version": "1.0.0",
+  "type": "module",
   "description": "Static AST Codebase Analyzer & Breaking Change Predictor for Node.js Dependencies",
   "bin": {
-    "breakguard": "./dist/index.mjs"
+    "breakguard": "./bin/breakguard.js"
   },
-  "main": "./dist/index.mjs",
-  "types": "./dist/index.d.mts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsup",
-    "dev": "tsup src/index.ts --format esm --watch",
+    "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "clean": "rimraf dist"
   },
   "dependencies": {
-    "@breakguard/ast-scanner": "workspace:*",
-    "@breakguard/core-types": "workspace:*",
-    "@breakguard/lockfile-parser": "workspace:*",
-    "@breakguard/risk-engine": "workspace:*",
-    "picocolors": "^1.1.1",
-    "tinyglobby": "^0.2.12"
+    "@breakguard/core": "workspace:*",
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0",
+    "ora": "^8.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.9",
