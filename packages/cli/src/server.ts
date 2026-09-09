@@ -1,9 +1,53 @@
 import http from "node:http";
+import https from "node:https";
 import fs from "node:fs";
 import path from "node:path";
 import { exec } from "node:child_process";
 import chalk from "chalk";
 import { analyzeProject, analyzeGitHubRepo } from "@breakguard/core";
+
+// ── In-memory OAuth token store ──────────────────────────────────────────────
+let githubAccessToken: string | null = null;
+let githubUser: { login: string; avatar_url: string; name: string } | null = null;
+
+const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || "";
+const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || "";
+
+async function exchangeCodeForToken(code: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ client_id: GITHUB_CLIENT_ID, client_secret: GITHUB_CLIENT_SECRET, code });
+    const req = https.request(
+      { hostname: "github.com", path: "/login/oauth/access_token", method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json", "Content-Length": Buffer.byteLength(body) } },
+      (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => {
+          try { resolve(JSON.parse(data).access_token || ""); } catch { reject(new Error("Token parse failed")); }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+async function fetchGitHubUser(token: string) {
+  return new Promise<{ login: string; avatar_url: string; name: string }>((resolve, reject) => {
+    const req = https.request(
+      { hostname: "api.github.com", path: "/user", method: "GET",
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.v3+json", "User-Agent": "BreakGuard/1.0" } },
+      (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => { try { resolve(JSON.parse(data)); } catch { reject(new Error("User parse failed")); } });
+      }
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
 
 export function startGuiServer(port = 4567, autoOpen = true) {
   // Find desktop dist if available locally
@@ -39,7 +83,61 @@ export function startGuiServer(port = 4567, autoOpen = true) {
     // API: Health check
     if (url.pathname === "/api/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", version: "1.0.0" }));
+      res.end(JSON.stringify({ status: "ok", version: "1.2.0" }));
+      return;
+    }
+
+    // API: Auth status
+    if (url.pathname === "/api/auth/status") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ authenticated: !!githubAccessToken, user: githubUser }));
+      return;
+    }
+
+    // API: Logout
+    if (url.pathname === "/api/auth/logout") {
+      githubAccessToken = null;
+      githubUser = null;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true }));
+      return;
+    }
+
+    // OAuth: Redirect to GitHub login
+    if (url.pathname === "/auth/github") {
+      if (!GITHUB_CLIENT_ID) {
+        res.writeHead(400, { "Content-Type": "text/html" });
+        res.end(`<h2>⚠️ GITHUB_CLIENT_ID not set.</h2><p>Run: <code>set GITHUB_CLIENT_ID=your_id && breakguard.exe ui</code></p>`);
+        return;
+      }
+      const scope = "read:user,public_repo";
+      const redirectUri = encodeURIComponent(`http://localhost:${port}/auth/callback`);
+      const loginUrl = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&scope=${scope}&redirect_uri=${redirectUri}`;
+      res.writeHead(302, { Location: loginUrl });
+      res.end();
+      return;
+    }
+
+    // OAuth: Callback — exchange code for token
+    if (url.pathname === "/auth/callback") {
+      const code = url.searchParams.get("code");
+      if (!code) {
+        res.writeHead(400, { "Content-Type": "text/html" });
+        res.end(`<h2>❌ Missing OAuth code.</h2>`);
+        return;
+      }
+      try {
+        const token = await exchangeCodeForToken(code);
+        if (!token) throw new Error("Empty token received");
+        githubAccessToken = token;
+        githubUser = await fetchGitHubUser(token);
+        // Redirect back to dashboard with success
+        res.writeHead(302, { Location: "/?auth=success" });
+        res.end();
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "text/html" });
+        res.end(`<h2>❌ Auth failed: ${err.message}</h2><a href="/">← Back</a>`);
+      }
       return;
     }
 
@@ -130,7 +228,9 @@ export function startGuiServer(port = 4567, autoOpen = true) {
             res.end(JSON.stringify({ error: "Missing repoUrl parameter" }));
             return;
           }
-          const report = await analyzeGitHubRepo(parsed.repoUrl, { token: parsed.token });
+          // Use stored OAuth token if available, fallback to provided token
+          const token = githubAccessToken || parsed.token || undefined;
+          const report = await analyzeGitHubRepo(parsed.repoUrl, { token });
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify(report));
         } catch (err: any) {
@@ -237,8 +337,10 @@ function getEmbeddedDashboardHtml(): string {
     <div class="flex items-center gap-3">
       <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
         <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-        Core Engine Online
+        Engine Online
       </span>
+      <!-- Auth Status injected by JS -->
+      <div id="authWidget"></div>
     </div>
   </header>
 
@@ -306,6 +408,42 @@ function getEmbeddedDashboardHtml(): string {
   </main>
 
   <script>
+    // ── Auth ────────────────────────────────────────────────────────────────
+    async function loadAuthStatus() {
+      try {
+        const res = await fetch('/api/auth/status');
+        const data = await res.json();
+        const widget = document.getElementById('authWidget');
+        if (data.authenticated && data.user) {
+          widget.innerHTML = `
+            <div class="flex items-center gap-2">
+              <img src="${data.user.avatar_url}" class="w-7 h-7 rounded-full border border-slate-600" />
+              <span class="text-xs font-semibold text-slate-200">${data.user.login}</span>
+              <button onclick="logout()" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] font-semibold text-slate-400 border border-slate-700 transition cursor-pointer">Sign out</button>
+            </div>`;
+        } else {
+          widget.innerHTML = `
+            <a href="/auth/github" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-semibold text-slate-200 transition" title="Login to use GitHub token automatically">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+              Login with GitHub
+            </a>`;
+        }
+      } catch {}
+    }
+
+    async function logout() {
+      await fetch('/api/auth/logout');
+      loadAuthStatus();
+    }
+
+    // Check auth on page load
+    loadAuthStatus();
+    // Re-check if returning from OAuth (/?auth=success)
+    if (new URLSearchParams(location.search).get('auth') === 'success') {
+      history.replaceState({}, '', '/');
+    }
+
+    // ── GitHub Audit ────────────────────────────────────────────────────────
     async function runGitHubAudit() {
       const repoUrl = document.getElementById("githubRepoInput").value.trim();
       if (!repoUrl) return;
