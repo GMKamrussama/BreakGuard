@@ -96,92 +96,18 @@ program
 
 program
   .command("ui")
-  .description("Launch the polished BreakGuard Graphical Dashboard in your default browser")
-  .action(async () => {
-    openWebDashboard();
+  .description("Launch the polished BreakGuard Graphical Dashboard in your browser")
+  .option("-p, --port <port>", "Port to run GUI server on", "4567")
+  .action((options) => {
+    startGuiServer(parseInt(options.port, 10), true);
   });
 
-function openWebDashboard() {
-  console.log(chalk.cyan("\n🌐 Opening BreakGuard Polished Web UI Dashboard at http://localhost:3000..."));
-  if (process.platform === "win32") {
-    exec("start http://localhost:3000");
-  } else if (process.platform === "darwin") {
-    exec("open http://localhost:3000");
-  } else {
-    exec("xdg-open http://localhost:3000");
-  }
-}
+import { startGuiServer } from "./server.js";
 
-async function runInteractiveMenu() {
-  isInteractiveSession = true;
-  while (true) {
-    console.clear();
-    console.log(chalk.bold.cyan("\n======================================================="));
-    console.log(chalk.bold.white("  BreakGuard 🛡️ — AST & GitHub QA Analyzer"));
-    console.log(chalk.gray("  Official Integration for GitHub Developer Program"));
-    console.log(chalk.bold.cyan("=======================================================\n"));
-
-    console.log(chalk.white.bold("Select an action:"));
-    console.log(`  ${chalk.cyan("[1]")} 🌐 Analyze a Remote GitHub Repository (QA Health & Badge)`);
-    console.log(`  ${chalk.cyan("[2]")} 📁 Scan Current Local Directory (.)`);
-    console.log(`  ${chalk.cyan("[3]")} 📂 Scan Another Local Path`);
-    console.log(`  ${chalk.cyan("[4]")} 🌲 Render Dependency Hierarchy Tree`);
-    console.log(`  ${chalk.cyan("[5]")} 🚀 Launch Polished Graphical UI (Browser Dashboard)`);
-    console.log(`  ${chalk.cyan("[6]")} 🚪 Exit`);
-    console.log("");
-
-    const choice = await askQuestion(chalk.yellow("Enter choice [1-6]: "));
-
-    try {
-      if (choice === "1") {
-        console.log("");
-        const repoUrl = await askQuestion(
-          chalk.white("Enter GitHub Repo (e.g. facebook/react or https://github.com/owner/repo): ")
-        );
-        if (repoUrl) {
-          console.log("");
-          await repoCommand(repoUrl);
-        } else {
-          console.log(chalk.yellow("\nNo repository provided."));
-        }
-      } else if (choice === "2") {
-        console.log("");
-        await scanCommand(".");
-      } else if (choice === "3") {
-        console.log("");
-        const folderPath = await askQuestion(chalk.white("Enter folder path: "));
-        if (folderPath) {
-          console.log("");
-          await scanCommand(folderPath);
-        } else {
-          console.log(chalk.yellow("\nNo path provided."));
-        }
-      } else if (choice === "4") {
-        console.log("");
-        await treeCommand(".");
-      } else if (choice === "5") {
-        openWebDashboard();
-      } else if (choice === "6" || choice.toLowerCase() === "q" || choice.toLowerCase() === "exit") {
-        console.log(chalk.green("\nThank you for using BreakGuard! Goodbye.\n"));
-        process.exit(0);
-      } else {
-        console.log(chalk.red("\nInvalid choice. Please choose 1 to 6."));
-      }
-    } catch (err: any) {
-      console.error(chalk.red(`\nAn error occurred: ${err?.message || String(err)}`));
-    }
-
-    await pausePrompt();
-  }
-}
-
-// If executed with no arguments (e.g. double clicked in Windows Explorer, or just `breakguard`),
-// launch the interactive menu so the window NEVER closes unexpectedly!
+// If executed with no arguments (e.g. double clicked in Windows Explorer, or just `breakguard.exe`),
+// immediately launch the polished Graphical UI Dashboard without asking the user to manually select options!
 if (process.argv.length <= 2) {
-  runInteractiveMenu().catch(async (err) => {
-    console.error(chalk.red(`\nFatal error: ${err?.message || String(err)}`));
-    await pausePrompt();
-  });
+  startGuiServer(4567, true);
 } else {
   program.parse(process.argv);
 }
