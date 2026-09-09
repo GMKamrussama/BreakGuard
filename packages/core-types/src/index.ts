@@ -189,3 +189,78 @@ export const VulnerabilityInfoSchema = z.object({
   fixedIn: z.string().optional(),
   references: z.array(z.string()),
 });
+
+/**
+ * GitHub Developer Program & Remote Repository QA Types
+ */
+export interface GitHubRepoMetadata {
+  owner: string;
+  repo: string;
+  fullName: string;
+  description: string;
+  stars: number;
+  forks: number;
+  openIssuesCount: number;
+  defaultBranch: string;
+  license?: string;
+  isArchived: boolean;
+  createdAt: string;
+  updatedAt: string;
+  pushedAt: string;
+  topics: string[];
+  htmlUrl: string;
+}
+
+export interface GitHubCommitSummary {
+  recentCommitsCount: number;
+  lastCommitDate: string;
+  activeAuthorsCount: number;
+  velocityScore: number;
+}
+
+export interface GitHubPRSummary {
+  openPRsCount: number;
+  closedPRsCount: number;
+  mergeRatePercent: number;
+}
+
+export interface GitHubLanguageBreakdown {
+  [language: string]: {
+    bytes: number;
+    percentage: number;
+  };
+}
+
+export interface GitHubQAHealthScore {
+  totalScore: number; // 0 to 100
+  grade: "A+" | "A" | "B" | "C" | "D";
+  maintenanceScore: number; // 0 to 25
+  issueResolutionScore: number; // 0 to 25
+  documentationScore: number; // 0 to 20
+  dependencyRiskScore: number; // 0 to 30
+  badgeMarkdown: string;
+  highlights: string[];
+  warnings: string[];
+}
+
+export interface GitHubDependencyItem {
+  name: string;
+  versionSpec: string;
+  category: DependencyCategory;
+  latestVersion?: string;
+  isOutdated?: boolean;
+  vulnerabilitiesCount?: number;
+}
+
+export interface GitHubRepoReport {
+  timestamp: string;
+  repo: GitHubRepoMetadata;
+  languages: GitHubLanguageBreakdown;
+  commits: GitHubCommitSummary;
+  pullRequests: GitHubPRSummary;
+  qaScore: GitHubQAHealthScore;
+  dependencies: {
+    totalDirectDependencies: number;
+    dependenciesList: GitHubDependencyItem[];
+  };
+}

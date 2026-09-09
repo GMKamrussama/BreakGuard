@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@breakguard/ast-scanner": "workspace:*",
+    "@breakguard/core": "workspace:*",
     "@breakguard/core-types": "workspace:*",
     "@breakguard/lockfile-parser": "workspace:*",
     "@breakguard/risk-engine": "workspace:*",

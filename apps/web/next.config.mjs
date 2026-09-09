@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  serverExternalPackages: ["@breakguard/ast-scanner", "@swc/core"],
+  serverExternalPackages: ["@breakguard/core", "@breakguard/ast-scanner", "@swc/core"],
   reactStrictMode: true,
   transpilePackages: [
     "@breakguard/core-types",

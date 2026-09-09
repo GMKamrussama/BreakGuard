@@ -17,6 +17,7 @@ export * from "@breakguard/core-types";
 export * from "@breakguard/lockfile-parser";
 export * from "@breakguard/ast-scanner";
 export * from "@breakguard/risk-engine";
+export * from "./github";
 
 export interface AnalyzeOptions {
   onProgress?: (step: string) => void;
