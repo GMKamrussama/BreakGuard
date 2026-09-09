@@ -117,8 +117,4 @@ pnpm dev
 pnpm desktop:build
 ```
 
----
 
-### GitHub Topics for SEO
-
-`dependency-analyzer`, `ast-parser`, `swc`, `breaking-changes`, `package-json`, `semver-checker`, `nextjs`, `react-flow`, `developer-tools`, `typescript`, `tauri`, `bun-compile`, `cli`
