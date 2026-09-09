@@ -34,7 +34,6 @@ export async function scanCommand(targetPath = ".", options: { json?: boolean } 
     return report;
   } catch (err: any) {
     if (spinner) spinner.fail(chalk.red("Analysis failed!"));
-    console.error(chalk.red(`\nError: ${err.message || String(err)}`));
-    process.exit(1);
+    console.error(chalk.red(`\nError: ${err.message || String(err)}\n`));
   }
 }

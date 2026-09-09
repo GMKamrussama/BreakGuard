@@ -20,7 +20,6 @@ export async function treeCommand(targetPath = ".", options: { json?: boolean } 
     renderDependencyTree(report);
   } catch (err: any) {
     spinner.fail(chalk.red("Tree resolution failed!"));
-    console.error(chalk.red(`\nError: ${err.message || String(err)}`));
-    process.exit(1);
+    console.error(chalk.red(`\nError: ${err.message || String(err)}\n`));
   }
 }
