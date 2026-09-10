@@ -14,8 +14,59 @@ import {
   type DeviceCodeResponse,
 } from "./auth.js";
 
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
+import { getEmbeddedAsset } from "./embedded-desktop.js";
+
+const execAsync = promisify(exec);
+
 const currentFile = fileURLToPath(import.meta.url);
 const currentDirectory = path.dirname(currentFile);
+
+function getEffectiveProjectRoot(specifiedPath?: string): string {
+  let target = specifiedPath ? path.resolve(process.cwd(), specifiedPath) : process.cwd();
+  if (
+    path.basename(target).toLowerCase() === "dist" &&
+    !fs.existsSync(path.join(target, "package.json")) &&
+    fs.existsSync(path.join(target, "..", "package.json"))
+  ) {
+    return path.resolve(target, "..");
+  }
+  return target;
+}
+
+async function openNativeFolderDialog(): Promise<string | null> {
+  const isWindows = process.platform === "win32";
+  const isMac = process.platform === "darwin";
+
+  if (isWindows) {
+    const psScript = `Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; $dialog.Description = 'Select Node.js Project Directory'; $dialog.ShowNewFolderButton = $false; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($dialog.SelectedPath) }`;
+    const escaped = psScript.replace(/"/g, '\"');
+    const { stdout } = await execAsync(`powershell -NoProfile -STA -Command "${escaped}"`, {
+      windowsHide: true,
+      maxBuffer: 1024 * 1024,
+      timeout: 60000,
+    });
+    const selected = stdout.trim();
+    return selected || null;
+  } else if (isMac) {
+    const { stdout } = await execAsync(
+      `osascript -e 'POSIX path of (choose folder with prompt "Select Node.js Project Directory")'`,
+      { maxBuffer: 1024 * 1024, timeout: 60000 }
+    );
+    const selected = stdout.trim();
+    return selected || null;
+  } else {
+    try {
+      const { stdout } = await execAsync(`zenity --file-selection --directory --title="Select Node.js Project Directory"`, {
+        timeout: 60000,
+      });
+      return stdout.trim() || null;
+    } catch {
+      return null;
+    }
+  }
+}
 
 interface ActiveDeviceFlow {
   device: DeviceCodeResponse;
@@ -71,9 +122,14 @@ function requireAuthentication(res: http.ServerResponse): boolean {
 }
 
 export function startGuiServer(port = 4567, autoOpen = true) {
+  const execDir = path.dirname(process.execPath);
   // Find desktop dist if available locally
   const possibleDistPaths = [
     path.resolve(process.cwd(), "apps/desktop/dist"),
+    path.resolve(process.cwd(), "../apps/desktop/dist"),
+    path.resolve(execDir, "apps/desktop/dist"),
+    path.resolve(execDir, "../apps/desktop/dist"),
+    path.resolve(execDir, "desktop"),
     path.resolve(currentDirectory, "../../desktop/dist"),
     path.resolve(currentDirectory, "../../../apps/desktop/dist"),
     path.resolve(process.cwd(), "dist/desktop"),
@@ -173,12 +229,89 @@ export function startGuiServer(port = 4567, autoOpen = true) {
       return;
     }
 
+    // API: Native folder picker dialog
+    if ((url.pathname === "/api/dialog/folder" && req.method === "POST") ||
+        (url.pathname === "/api/dialog/folder" && req.method === "GET")) {
+      try {
+        const folderPath = await openNativeFolderDialog();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ path: folderPath }));
+      } catch (err: any) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ path: null, error: err?.message || "Folder selection cancelled" }));
+      }
+      return;
+    }
+
+    // API: List authenticated user's GitHub Repositories
+    if (url.pathname === "/api/github/repos" && req.method === "GET") {
+      if (!requireAuthentication(res)) return;
+      try {
+        const auth = currentAuth();
+        if (!auth?.accessToken) {
+          res.writeHead(401, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "GitHub login required." }));
+          return;
+        }
+
+        let repos: any[] = [];
+        const ghRes = await fetch("https://api.github.com/user/repos?sort=updated&per_page=100&affiliation=owner,collaborator,organization_member", {
+          headers: {
+            Authorization: `Bearer ${auth.accessToken}`,
+            Accept: "application/vnd.github+json",
+            "User-Agent": "BreakGuard-CLI",
+          },
+        });
+
+        if (ghRes.ok) {
+          repos = await ghRes.json();
+        } else {
+          // Fallback to user public repositories
+          const userRes = await fetch(`https://api.github.com/users/${encodeURIComponent(auth.user.login)}/repos?sort=updated&per_page=100`, {
+            headers: {
+              Authorization: `Bearer ${auth.accessToken}`,
+              Accept: "application/vnd.github+json",
+              "User-Agent": "BreakGuard-CLI",
+            },
+          });
+          if (userRes.ok) {
+            repos = await userRes.json();
+          } else {
+            throw new Error(`GitHub API returned ${ghRes.status}`);
+          }
+        }
+
+        const simplified = Array.isArray(repos)
+          ? repos.map((r: any) => ({
+              id: r.id,
+              name: r.name,
+              fullName: r.full_name,
+              htmlUrl: r.html_url,
+              description: r.description,
+              isPrivate: Boolean(r.private),
+              stargazersCount: r.stargazers_count ?? 0,
+              language: r.language ?? "TypeScript",
+              defaultBranch: r.default_branch ?? "main",
+              updatedAt: r.updated_at,
+            }))
+          : [];
+
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ repos: simplified }));
+        return;
+      } catch (err: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err?.message || "Failed to fetch repositories" }));
+        return;
+      }
+    }
+
     // API: Discovered & Recent Workspaces
     if (url.pathname === "/api/projects") {
       if (!requireAuthentication(res)) return;
       try {
         const results: Array<{ name: string; path: string; isCurrent: boolean; lockfile: string | null }> = [];
-        const cwd = process.cwd();
+        const cwd = getEffectiveProjectRoot();
         results.push({
           name: path.basename(cwd) || "current",
           path: cwd,
@@ -222,7 +355,7 @@ export function startGuiServer(port = 4567, autoOpen = true) {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({
-            projects: [{ name: "BreakGuard", path: process.cwd(), isCurrent: true, lockfile: "pnpm" }],
+            projects: [{ name: "BreakGuard", path: getEffectiveProjectRoot(), isCurrent: true, lockfile: "pnpm" }],
           })
         );
         return;
@@ -237,7 +370,7 @@ export function startGuiServer(port = 4567, autoOpen = true) {
       req.on("end", async () => {
         try {
           const parsed = body ? JSON.parse(body) : {};
-          const targetPath = parsed.targetPath || process.cwd();
+          const targetPath = getEffectiveProjectRoot(parsed.targetPath);
           const excludePatterns = Array.isArray(parsed.excludePatterns) ? parsed.excludePatterns : [];
           const report = await analyzeProject(targetPath, { excludePatterns });
           res.writeHead(200, { "Content-Type": "application/json" });
@@ -277,7 +410,7 @@ export function startGuiServer(port = 4567, autoOpen = true) {
       return;
     }
 
-    // Static Files: If apps/desktop/dist exists, serve it
+    // Static Files: If apps/desktop/dist exists on disk, serve it
     if (desktopDistPath) {
       let reqPath = url.pathname === "/" ? "/index.html" : url.pathname;
       const filePath = path.join(desktopDistPath, reqPath);
@@ -285,9 +418,9 @@ export function startGuiServer(port = 4567, autoOpen = true) {
       if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
         const ext = path.extname(filePath).toLowerCase();
         const contentTypes: Record<string, string> = {
-          ".html": "text/html",
-          ".js": "application/javascript",
-          ".css": "text/css",
+          ".html": "text/html; charset=utf-8",
+          ".js": "application/javascript; charset=utf-8",
+          ".css": "text/css; charset=utf-8",
           ".svg": "image/svg+xml",
           ".json": "application/json",
           ".png": "image/png",
@@ -298,8 +431,28 @@ export function startGuiServer(port = 4567, autoOpen = true) {
       }
     }
 
-    // Fallback: Embed rich, standalone polished dashboard HTML directly inside binary
-    res.writeHead(200, { "Content-Type": "text/html" });
+    // Embedded Desktop Bundle fallback (Zero host dependencies, works in any directory)
+    const embeddedAsset = getEmbeddedAsset(url.pathname);
+    if (embeddedAsset) {
+      res.writeHead(200, { "Content-Type": embeddedAsset.contentType });
+      if (embeddedAsset.encoding === "base64") {
+        res.end(Buffer.from(embeddedAsset.data, "base64"));
+      } else {
+        res.end(embeddedAsset.data);
+      }
+      return;
+    }
+
+    // SPA Routing Fallback: If not an API route and not a static file, serve embedded index.html
+    const embeddedIndex = getEmbeddedAsset("/index.html");
+    if (embeddedIndex) {
+      res.writeHead(200, { "Content-Type": embeddedIndex.contentType });
+      res.end(embeddedIndex.data);
+      return;
+    }
+
+    // Emergency Fallback: Embed minimal standalone polished dashboard HTML
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(getEmbeddedDashboardHtml());
   });
 
@@ -528,6 +681,10 @@ function getEmbeddedDashboardHtml(): string {
           <div class="flex gap-2">
             <input id="localPathInput" type="text" placeholder="Directory path (default: .)" value="."
               class="flex-1 rounded-xl bg-black/60 border border-slate-700/80 px-3.5 py-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 font-mono transition">
+            <button onclick="browseLocalFolder()" type="button"
+              class="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-200 transition flex items-center gap-1.5 cursor-pointer shrink-0" title="Open Native Folder Browser Dialog">
+              <span>📂</span> Browse...
+            </button>
             <button onclick="runLocalScan()" id="localScanBtn"
               class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-xs font-semibold text-white transition flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 cursor-pointer shrink-0">
               Scan Local
@@ -541,6 +698,13 @@ function getEmbeddedDashboardHtml(): string {
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- Floating In-App Glassmorphic Notification Toast -->
+    <div id="dashboardToast" class="hidden fixed bottom-6 right-6 z-50 flex items-center gap-3 px-5 py-3.5 rounded-xl shadow-2xl backdrop-blur-md border text-sm font-medium transition-all duration-300">
+      <span id="dashboardToastIcon">⚠️</span>
+      <span id="dashboardToastMsg"></span>
+      <button onclick="document.getElementById('dashboardToast').classList.add('hidden')" class="ml-2 text-slate-400 hover:text-slate-200 cursor-pointer text-xs">✕</button>
     </div>
 
     <!-- Live Results Container -->
@@ -757,6 +921,33 @@ function getEmbeddedDashboardHtml(): string {
 
     loadAuthStatus();
 
+    function showDashboardToast(msg, isError) {
+      if (isError === undefined) isError = true;
+      const toast = document.getElementById("dashboardToast");
+      const msgEl = document.getElementById("dashboardToastMsg");
+      const iconEl = document.getElementById("dashboardToastIcon");
+      if (!toast || !msgEl) return;
+      msgEl.textContent = msg;
+      iconEl.textContent = isError ? "⚠️" : "✅";
+      toast.className = 'fixed bottom-6 right-6 z-50 flex items-center gap-3 px-5 py-3.5 rounded-xl shadow-2xl backdrop-blur-md border text-sm font-medium transition-all duration-300 ' +
+        (isError ? 'bg-rose-950/90 border-rose-500/50 text-rose-200 shadow-rose-500/20' : 'bg-emerald-950/90 border-emerald-500/50 text-emerald-200 shadow-emerald-500/20');
+      toast.classList.remove("hidden");
+      setTimeout(function() { toast.classList.add("hidden"); }, 6000);
+    }
+
+    async function browseLocalFolder() {
+      try {
+        const res = await fetch("/api/dialog/folder", { method: "POST" });
+        const data = await res.json();
+        if (data && data.path) {
+          document.getElementById("localPathInput").value = data.path;
+          showDashboardToast("Selected directory: " + data.path, false);
+        }
+      } catch (err) {
+        showDashboardToast("Folder selection failed", true);
+      }
+    }
+
     // ── GitHub Audit Report ─────────────────────────────────────────────────
     async function runGitHubAudit() {
       const repoUrl = document.getElementById("githubRepoInput").value.trim();
@@ -775,7 +966,11 @@ function getEmbeddedDashboardHtml(): string {
         if (!res.ok) throw new Error(data.error || "GitHub audit failed");
         renderGitHubReport(data);
       } catch (err) {
-        alert("Error: " + err.message);
+        showDashboardToast(err.message, true);
+        if (err.message && err.message.toLowerCase().includes("login required")) {
+          const gate = document.getElementById('authGate');
+          if (gate) gate.classList.remove('hidden');
+        }
       } finally {
         btn.disabled = false;
         btn.innerText = "Audit Repo";
@@ -798,7 +993,7 @@ function getEmbeddedDashboardHtml(): string {
         if (!res.ok) throw new Error(data.error || "Local scan failed");
         renderLocalReport(data);
       } catch (err) {
-        alert("Error: " + err.message);
+        showDashboardToast(err.message, true);
       } finally {
         btn.disabled = false;
         btn.innerText = "Scan Local";

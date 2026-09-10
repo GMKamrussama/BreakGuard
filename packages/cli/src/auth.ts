@@ -7,7 +7,7 @@ const DEFAULT_GITHUB_CLIENT_ID = "Ov23li6SliiHRpeaqbQL";
 
 export const GITHUB_CLIENT_ID =
   process.env.BREAKGUARD_GITHUB_CLIENT_ID || process.env.GITHUB_CLIENT_ID || DEFAULT_GITHUB_CLIENT_ID;
-export const GITHUB_SCOPE = process.env.BREAKGUARD_GITHUB_SCOPE || "read:user";
+export const GITHUB_SCOPE = process.env.BREAKGUARD_GITHUB_SCOPE || "read:user,repo";
 
 const authFile =
   process.env.BREAKGUARD_AUTH_FILE || path.join(os.homedir(), ".breakguard", "github-auth.json");
