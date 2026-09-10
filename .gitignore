@@ -97,3 +97,5 @@ tmp/
 temp/
 *.tmp
 .temp/
+
+docs/
