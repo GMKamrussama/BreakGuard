@@ -493,6 +493,37 @@ const nodeTypes = {
   leafNode: EndLeafNode,
 };
 
+type AuthUser = {
+  login: string;
+  avatar_url?: string;
+  name?: string | null;
+};
+
+type AuthState = {
+  loading: boolean;
+  authenticated: boolean;
+  user: AuthUser | null;
+  error: string | null;
+};
+
+function isTauriRuntime() {
+  return typeof window !== "undefined" && Boolean((window as any).__TAURI_INTERNALS__);
+}
+
+async function invokeTauri<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<T>(command, args);
+}
+
+function getAuthApiHost() {
+  if (typeof window !== "undefined") {
+    if (window.location.port === "1420" || window.location.port === "5173") {
+      return "http://127.0.0.1:4567";
+    }
+  }
+  return "";
+}
+
 export default function App() {
   const [report, setReport] = useState<ProjectAnalysisReport>(INITIAL_DEMO_REPORT);
   const [selectedNode, setSelectedNode] = useState<DependencyNode | null>(report.dependencies["axios"] || null);
@@ -505,7 +536,148 @@ export default function App() {
   const [copiedCommand, setCopiedCommand] = useState<boolean>(false);
   const [statusToast, setStatusToast] = useState<string | null>(null);
 
-  // Global AI Fix Modal States
+  const [authState, setAuthState] = useState<AuthState>({
+    loading: true,
+    authenticated: false,
+    user: null,
+    error: null,
+  });
+  const [isLoginOpen, setIsLoginOpen] = useState(false);
+  const [deviceCode, setDeviceCode] = useState<{
+    deviceCode: string;
+    userCode: string;
+    verificationUri: string;
+    expiresIn: number;
+    pollInterval: number;
+  } | null>(null);
+  const [isStartingLogin, setIsStartingLogin] = useState(false);
+
+  async function refreshAuthStatus() {
+    try {
+      if (isTauriRuntime()) {
+        const status = await invokeTauri<{ authenticated: boolean; user: AuthUser | null }>("github_auth_status");
+        const data = { ...status, deviceFlow: null, error: null };
+        setAuthState({ loading: false, authenticated: Boolean(data.authenticated), user: data.user || null, error: null });
+        return data;
+      }
+      const response = await fetch(`${getAuthApiHost()}/api/auth/status`, { cache: "no-store" });
+      if (!response.ok) throw new Error(`Auth server returned ${response.status}`);
+      const data = await response.json();
+      setAuthState({
+        loading: false,
+        authenticated: Boolean(data.authenticated),
+        user: data.user || null,
+        error: data.error || null,
+      });
+      return data;
+    } catch {
+      setAuthState((previous) => ({
+        ...previous,
+        loading: false,
+        error: "The local BreakGuard auth server is not running.",
+      }));
+      return null;
+    }
+  }
+
+  async function startGitHubLogin() {
+    setIsStartingLogin(true);
+    setAuthState((previous) => ({ ...previous, error: null }));
+    try {
+      if (isTauriRuntime()) {
+        const data = await invokeTauri<{ device_code: string; user_code: string; verification_uri: string; expires_in: number; interval?: number }>("github_device_code");
+        setDeviceCode({
+          deviceCode: data.device_code,
+          userCode: data.user_code,
+          verificationUri: data.verification_uri,
+          expiresIn: data.expires_in || 900,
+          pollInterval: data.interval || 5,
+        });
+        setIsLoginOpen(true);
+        if (isTauriRuntime()) {
+          void invokeTauri("open_github_device_url", { url: data.verification_uri }).catch((error: any) => {
+            setAuthState((previous) => ({ ...previous, error: error?.message || "Open the GitHub device URL manually." }));
+          });
+        }
+        return;
+      }
+      const response = await fetch(`${getAuthApiHost()}/api/auth/device`, { method: "POST" });
+      const data = await response.json();
+      if (!response.ok || data.error) {
+        throw new Error(data.error || "Could not start GitHub login.");
+      }
+      setDeviceCode({
+        deviceCode: data.device_code,
+        userCode: data.user_code,
+        verificationUri: data.verification_uri || "https://github.com/login/device",
+        expiresIn: data.expires_in || 900,
+        pollInterval: data.interval || 5,
+      });
+      setIsLoginOpen(true);
+    } catch (error: any) {
+      setAuthState((previous) => ({
+        ...previous,
+        error: error?.message || "Could not start GitHub login.",
+      }));
+    } finally {
+      setIsStartingLogin(false);
+    }
+  }
+
+  async function cancelGitHubLogin() {
+    if (!isTauriRuntime()) {
+      await fetch(`${getAuthApiHost()}/api/auth/device`, { method: "DELETE" }).catch(() => {});
+    }
+    setDeviceCode(null);
+    setIsLoginOpen(false);
+  }
+
+  async function logoutGitHub() {
+    if (isTauriRuntime()) {
+      await invokeTauri("github_auth_logout").catch(() => {});
+    } else {
+      await fetch(`${getAuthApiHost()}/api/auth/logout`, { method: "POST" }).catch(() => {});
+    }
+    setDeviceCode(null);
+    setIsLoginOpen(false);
+    await refreshAuthStatus();
+  }
+
+  React.useEffect(() => {
+    void refreshAuthStatus();
+    const timer = window.setInterval(async () => {
+      const status = await refreshAuthStatus();
+      if (status?.authenticated) {
+        setDeviceCode(null);
+        setIsLoginOpen(false);
+      } else if (deviceCode && isTauriRuntime()) {
+        try {
+          const polled = await invokeTauri<{ authenticated: boolean; pending: boolean; user: AuthUser | null; error?: string }>("github_device_poll", { device_code: deviceCode.deviceCode });
+          if (polled.authenticated) {
+            setDeviceCode(null);
+            setIsLoginOpen(false);
+            await refreshAuthStatus();
+          } else if (polled.error) {
+            setAuthState((previous) => ({ ...previous, error: polled.error || "GitHub login failed." }));
+            setDeviceCode(null);
+            setIsLoginOpen(false);
+          }
+        } catch (error: any) {
+          setAuthState((previous) => ({ ...previous, error: error?.message || "GitHub login failed." }));
+          setDeviceCode(null);
+          setIsLoginOpen(false);
+        }
+      } else if (deviceCode && !isTauriRuntime()) {
+        if (status?.error) {
+          setAuthState((previous) => ({ ...previous, error: status.error }));
+          setDeviceCode(null);
+          setIsLoginOpen(false);
+        }
+      }
+    }, deviceCode?.pollInterval ? deviceCode.pollInterval * 1000 : 3000);
+    return () => window.clearInterval(timer);
+  }, [deviceCode]);
+
   const [isAiFixModalOpen, setIsAiFixModalOpen] = useState<boolean>(false);
   const [aiPromptScope, setAiPromptScope] = useState<"breaking" | "selected" | "all">("breaking");
   const [isPromptCopied, setIsPromptCopied] = useState<boolean>(false);
@@ -543,8 +715,8 @@ export default function App() {
 
   // Load recent & discovered workspaces from server when modal opens
   React.useEffect(() => {
-    if (isScanModalOpen) {
-      const apiHost = window.location.port === "1420" ? "http://localhost:4567" : "";
+    if (isScanModalOpen && authState.authenticated) {
+      const apiHost = window.location.port === "1420" ? "http://127.0.0.1:4567" : "";
       fetch(`${apiHost}/api/projects`)
         .then((res) => res.json())
         .then((data) => {
@@ -554,10 +726,14 @@ export default function App() {
         })
         .catch(() => {});
     }
-  }, [isScanModalOpen]);
+  }, [isScanModalOpen, authState.authenticated]);
 
   // Handle Directory Selection natively via local server or Tauri
   async function handleBrowseFolder() {
+    if (!authState.authenticated) {
+      setScanError("GitHub login required before using the workspace.");
+      return;
+    }
     setIsBrowsingFolder(true);
     try {
       if (window && (window as any).__TAURI_INTERNALS__) {
@@ -604,6 +780,11 @@ export default function App() {
 
   // Execute REAL Codebase Audit
   async function handleExecuteAudit() {
+    if (!authState.authenticated) {
+      setScanError("GitHub login required before using the workspace.");
+      setIsScanModalOpen(true);
+      return;
+    }
     setIsScanning(true);
     setScanError(null);
 
@@ -624,7 +805,7 @@ export default function App() {
     }
 
     try {
-      const apiHost = window.location.port === "1420" ? "http://localhost:4567" : "";
+      const apiHost = window.location.port === "1420" ? "http://127.0.0.1:4567" : "";
       const response = await fetch(`${apiHost}/api/scan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1292,6 +1473,11 @@ Suggestion: Apply code changes before upgrading this package in production.`,
 
           <button
             onClick={() => {
+              if (!authState.authenticated) {
+                setStatusToast("GitHub login required before using the workspace.");
+                setTimeout(() => setStatusToast(null), 3000);
+                return;
+              }
               setScanError(null);
               setIsScanModalOpen(true);
             }}
@@ -1313,13 +1499,132 @@ Suggestion: Apply code changes before upgrading this package in production.`,
             {isDrawerOpen ? <PanelRightClose className="w-3.5 h-3.5" /> : <PanelRightOpen className="w-3.5 h-3.5 text-blue-400" />}
             <span>{isDrawerOpen ? "Hide Details" : "Show Details"}</span>
           </button>
+
+          {authState.authenticated && authState.user ? (
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400" title="GitHub connected" />
+              <span className="text-xs text-slate-300 max-w-[110px] truncate" title={authState.user.login}>
+                {authState.user.login}
+              </span>
+              <button
+                type="button"
+                onClick={logoutGitHub}
+                className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] font-semibold text-slate-400 border border-slate-700 transition cursor-pointer"
+              >
+                Sign out
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={startGitHubLogin}
+              disabled={isStartingLogin}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-60 border border-slate-600 text-xs font-semibold text-slate-200 transition cursor-pointer"
+              title="Sign in with GitHub to use authenticated API access"
+            >
+              <Lock className="w-3.5 h-3.5 text-blue-400" />
+              {isStartingLogin ? "Connecting..." : "Login with GitHub"}
+            </button>
+          )}
         </div>
       </header>
 
-      {/* Interactive KPI Summary Ribbon */}
+      {authState.error && !authState.authenticated && (
+        <div className="px-4 py-2 border-b border-amber-900/60 bg-amber-950/40 text-[11px] text-amber-200 flex items-center justify-between gap-3">
+          <span>{authState.error}</span>
+          <button type="button" onClick={refreshAuthStatus} className="text-amber-300 hover:text-white underline cursor-pointer">
+            Retry
+          </button>
+        </div>
+      )}
+
+      {!authState.loading && !authState.authenticated && !isLoginOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-blue-500/40 shadow-2xl p-7">
+            <div className="flex items-center gap-3 text-blue-300 font-bold text-base">
+              <div className="p-2 rounded-xl bg-blue-600/20 border border-blue-500/30">
+                <Lock className="w-5 h-5" />
+              </div>
+              Sign in with GitHub to continue
+            </div>
+            <p className="mt-3 text-sm text-slate-300 leading-relaxed">
+              BreakGuard requires GitHub authorization before the workspace can be used. Your GitHub password and token are never typed into this app.
+            </p>
+            <div className="mt-4 rounded-xl bg-slate-950/80 border border-slate-800 p-3 text-xs text-slate-400">
+              We will show a one-time code, open GitHub automatically, and wait until you approve BreakGuard.
+            </div>
+            <div className="mt-6 flex justify-end">
+              <button type="button" onClick={startGitHubLogin} disabled={isStartingLogin} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-xs font-bold text-white cursor-pointer">
+                {isStartingLogin ? "Connecting…" : "Login with GitHub"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isLoginOpen && deviceCode && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
+          <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-blue-500/40 shadow-2xl p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 text-blue-300 font-bold text-sm">
+                  <Lock className="w-4 h-4" />
+                  Sign in with GitHub
+                </div>
+                <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+                  GitHub will open in your browser. Enter the one-time code below, approve BreakGuard, then return here.
+                </p>
+              </div>
+              {authState.authenticated && (
+                <button type="button" onClick={cancelGitHubLogin} className="text-slate-400 hover:text-white cursor-pointer" title="Cancel login">
+                  <X className="w-5 h-5" />
+                </button>
+              )}
+            </div>
+            <div className="mt-5 rounded-xl bg-slate-950 border border-slate-800 p-4 text-center">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500">One-time device code</div>
+              <div className="mt-2 text-3xl font-mono font-extrabold tracking-[0.25em] text-emerald-300 select-all">
+                {deviceCode.userCode}
+              </div>
+              <div className="mt-2 text-[10px] text-slate-500">
+                Expires in about {Math.ceil(deviceCode.expiresIn / 60)} minutes
+              </div>
+            </div>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => navigator.clipboard.writeText(deviceCode.userCode)}
+                className="flex-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 py-2.5 text-xs font-semibold text-slate-200 cursor-pointer"
+              >
+                Copy Code
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (isTauriRuntime()) {
+                    void invokeTauri("open_github_device_url", { url: deviceCode.verificationUri });
+                  } else {
+                    window.open(deviceCode.verificationUri, "_blank", "noopener,noreferrer");
+                  }
+                }}
+                className="flex-1 rounded-xl bg-blue-600 hover:bg-blue-500 py-2.5 text-xs font-bold text-white cursor-pointer"
+              >
+                Open GitHub
+              </button>
+            </div>
+            <div className="mt-4 flex items-center justify-center gap-2 text-[11px] text-slate-400">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-400" />
+              Waiting for GitHub authorization…
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="px-4 py-2.5 border-b border-slate-800/80 bg-slate-900/40 flex items-center justify-between shrink-0 text-xs">
         <div
-          onClick={() => setIsScanModalOpen(true)}
+          onClick={() => {
+            if (authState.authenticated) setIsScanModalOpen(true);
+          }}
           className="flex items-center gap-2 truncate cursor-pointer hover:opacity-80 transition group"
         >
           <span className="text-slate-400 text-xs">Workspace:</span>

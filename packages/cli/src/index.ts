@@ -6,6 +6,7 @@ import { scanCommand } from "./commands/scan.js";
 import { treeCommand } from "./commands/tree.js";
 import { auditCommand } from "./commands/audit.js";
 import { repoCommand } from "./commands/repo.js";
+import { authLoginCommand, authLogoutCommand, authStatusCommand } from "./commands/auth.js";
 
 const program = new Command();
 
@@ -93,6 +94,32 @@ program
       await askQuestion(chalk.gray("\nTask completed. Press Enter to exit..."));
     }
   });
+
+program
+  .command("auth")
+  .description("Sign in to GitHub with the OAuth App Device Flow")
+  .addCommand(
+    new Command("login")
+      .description("Open GitHub and wait for device authorization")
+      .option("--no-browser", "Print the URL without opening a browser")
+      .action(async (options) => {
+        try {
+          await authLoginCommand(options);
+        } catch {
+          process.exitCode = 1;
+        }
+      })
+  )
+  .addCommand(
+    new Command("status")
+      .description("Show the current GitHub login")
+      .action(() => authStatusCommand())
+  )
+  .addCommand(
+    new Command("logout")
+      .description("Remove the stored GitHub login")
+      .action(() => authLogoutCommand())
+  );
 
 program
   .command("ui")

@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
 import { analyzeGitHubRepo } from "@breakguard/core";
+import { readWebAuth } from "@/lib/github-auth";
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
     const repoUrl = body?.repoUrl;
-    const token = body?.token;
+    const storedAuth = await readWebAuth();
+    if (!storedAuth.token || !storedAuth.user) {
+      return NextResponse.json({ error: "GitHub login required. Please sign in first." }, { status: 401 });
+    }
+    const token = storedAuth.token;
 
     if (!repoUrl || typeof repoUrl !== "string") {
       return NextResponse.json(

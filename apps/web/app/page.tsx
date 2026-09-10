@@ -17,7 +17,10 @@ import {
   Layers,
   Sparkles,
   Play,
-  TerminalSquare
+  TerminalSquare,
+  Lock,
+  X,
+  RefreshCw,
 } from "lucide-react";
 
 export default function DashboardPage() {
@@ -30,6 +33,110 @@ export default function DashboardPage() {
   const [isSandboxOpen, setIsSandboxOpen] = useState<boolean>(false);
   const [sandboxTargetNode, setSandboxTargetNode] = useState<DependencyNode | null>(null);
   const [isUploadOpen, setIsUploadOpen] = useState<boolean>(false);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authUser, setAuthUser] = useState<{ login: string; name?: string | null } | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [deviceCode, setDeviceCode] = useState<{ deviceCode: string; userCode: string; verificationUri: string; expiresIn: number } | null>(null);
+  const [isLoginOpen, setIsLoginOpen] = useState(false);
+  const [isStartingLogin, setIsStartingLogin] = useState(false);
+
+  async function refreshAuth() {
+    try {
+      const response = await fetch("/api/auth/status", { cache: "no-store" });
+      const data = await response.json();
+      setAuthUser(data.authenticated ? data.user : null);
+      setAuthError(null);
+      return data;
+    } catch {
+      setAuthError("Authentication service is unavailable.");
+      return null;
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  async function startGitHubLogin() {
+    setIsStartingLogin(true);
+    setAuthError(null);
+    try {
+      const response = await fetch("/api/auth/device", { method: "POST" });
+      const data = await response.json();
+      if (!response.ok || data.error) throw new Error(data.error || "Could not start GitHub login.");
+      setDeviceCode({
+        deviceCode: data.device_code,
+        userCode: data.user_code,
+        verificationUri: data.verification_uri || "https://github.com/login/device",
+        expiresIn: data.expires_in || 900,
+      });
+      setIsLoginOpen(true);
+      window.open(data.verification_uri || "https://github.com/login/device", "_blank", "noopener,noreferrer");
+    } catch (error: any) {
+      setAuthError(error?.message || "Could not start GitHub login.");
+    } finally {
+      setIsStartingLogin(false);
+    }
+  }
+
+  async function cancelGitHubLogin() {
+    setDeviceCode(null);
+    setIsLoginOpen(false);
+  }
+
+  async function logoutGitHub() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    setAuthUser(null);
+    setDeviceCode(null);
+    setIsLoginOpen(false);
+  }
+
+  React.useEffect(() => {
+    void refreshAuth();
+  }, []);
+
+  React.useEffect(() => {
+    if (!deviceCode) return;
+    let cancelled = false;
+    let interval = 5;
+    let timer: number | undefined;
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const response = await fetch("/api/auth/device/poll", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ device_code: deviceCode.deviceCode }),
+        });
+        const data = await response.json();
+        if (data.authenticated) {
+          setAuthUser(data.user);
+          setDeviceCode(null);
+          setIsLoginOpen(false);
+          return;
+        }
+        if (data.pending) {
+          interval = data.interval || interval;
+        } else if (!response.ok || data.error) {
+          setAuthError(data.error || "GitHub login failed.");
+          setDeviceCode(null);
+          setIsLoginOpen(false);
+          return;
+        }
+      } catch {
+        setAuthError("Could not reach the GitHub authentication service.");
+        setDeviceCode(null);
+        setIsLoginOpen(false);
+        return;
+      }
+      if (!cancelled) timer = window.setTimeout(poll, interval * 1000);
+    };
+
+    timer = window.setTimeout(poll, interval * 1000);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [deviceCode]);
 
   function handleSelectNode(node: DependencyNode) {
     setSelectedNode(node);
@@ -106,6 +213,20 @@ export default function DashboardPage() {
 
         {/* Header Actions */}
         <div className="flex items-center gap-2.5">
+          {authUser ? (
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400" title="GitHub connected" />
+              <span className="text-xs text-slate-300 max-w-[110px] truncate">{authUser.login}</span>
+              <button onClick={logoutGitHub} className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-300 cursor-pointer">
+                Sign out
+              </button>
+            </div>
+          ) : (
+            <button onClick={startGitHubLogin} disabled={isStartingLogin} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-60 border border-slate-700 text-xs font-semibold text-slate-200 cursor-pointer">
+              <Lock className="w-3.5 h-3.5 text-blue-400" />
+              {isStartingLogin ? "Connecting..." : "Login with GitHub"}
+            </button>
+          )}
           <button
             onClick={() => setIsUploadOpen(true)}
             className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white transition shadow-md shadow-blue-500/20 cursor-pointer"
@@ -136,6 +257,43 @@ export default function DashboardPage() {
           </div>
         </div>
       </header>
+
+      {authError && (
+        <div className="px-6 py-2 border-b border-amber-900/60 bg-amber-950/40 text-xs text-amber-200 flex justify-between gap-3">
+          <span>{authError}</span>
+          <button onClick={refreshAuth} className="underline cursor-pointer">Retry</button>
+        </div>
+      )}
+
+      {!authLoading && !authUser && !isLoginOpen && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-blue-500/40 shadow-2xl p-7">
+            <div className="flex items-center gap-3 text-blue-300 font-bold text-base">
+              <div className="p-2 rounded-xl bg-blue-600/20 border border-blue-500/30"><Lock className="w-5 h-5" /></div>
+              Sign in with GitHub to continue
+            </div>
+            <p className="mt-3 text-sm text-slate-300 leading-relaxed">BreakGuard requires GitHub authorization before the dashboard can be used. Your GitHub password and token are never entered into BreakGuard.</p>
+            <div className="mt-4 rounded-xl bg-slate-950/80 border border-slate-800 p-3 text-xs text-slate-400">We will show a one-time code, open GitHub, and wait until you approve the app.</div>
+            <div className="mt-6 flex justify-end">
+              <button onClick={startGitHubLogin} disabled={isStartingLogin} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-xs font-bold text-white cursor-pointer">{isStartingLogin ? "Connecting…" : "Login with GitHub"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isLoginOpen && deviceCode && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
+          <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-blue-500/40 shadow-2xl p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div><div className="flex items-center gap-2 text-blue-300 font-bold text-sm"><Lock className="w-4 h-4" />Sign in with GitHub</div><p className="text-xs text-slate-400 mt-2">Open GitHub and enter this one-time code, then approve BreakGuard.</p></div>
+              {authUser && <button onClick={cancelGitHubLogin} className="text-slate-400 hover:text-white cursor-pointer"><X className="w-5 h-5" /></button>}
+            </div>
+            <div className="mt-5 rounded-xl bg-slate-950 border border-slate-800 p-4 text-center"><div className="text-[10px] uppercase tracking-wider text-slate-500">One-time device code</div><div className="mt-2 text-3xl font-mono font-extrabold tracking-[0.25em] text-emerald-300 select-all">{deviceCode.userCode}</div><div className="mt-2 text-[10px] text-slate-500">Expires in about {Math.ceil(deviceCode.expiresIn / 60)} minutes</div></div>
+            <div className="mt-4 flex gap-2"><button onClick={() => navigator.clipboard.writeText(deviceCode.userCode)} className="flex-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 py-2.5 text-xs font-semibold text-slate-200 cursor-pointer">Copy Code</button><button onClick={() => window.open(deviceCode.verificationUri, "_blank", "noopener,noreferrer")} className="flex-1 rounded-xl bg-blue-600 hover:bg-blue-500 py-2.5 text-xs font-bold text-white cursor-pointer">Open GitHub</button></div>
+            <div className="mt-4 flex items-center justify-center gap-2 text-[11px] text-slate-400"><RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-400" />Waiting for GitHub authorization…</div>
+          </div>
+        </div>
+      )}
 
       {/* Main Container */}
       <main className="flex-1 p-6 max-w-[1700px] w-full mx-auto space-y-6">

@@ -1,60 +1,81 @@
 import http from "node:http";
-import https from "node:https";
 import fs from "node:fs";
 import path from "node:path";
-import { exec } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import chalk from "chalk";
 import { analyzeProject, analyzeGitHubRepo } from "@breakguard/core";
+import {
+  completeDeviceFlow,
+  clearStoredAuth,
+  GitHubAuthError,
+  readStoredAuth,
+  requestDeviceCode,
+  openExternalUrl,
+  type DeviceCodeResponse,
+} from "./auth.js";
 
-// ── In-memory OAuth token store ──────────────────────────────────────────────
-let githubAccessToken: string | null = null;
-let githubUser: { login: string; avatar_url: string; name: string } | null = null;
+const currentFile = fileURLToPath(import.meta.url);
+const currentDirectory = path.dirname(currentFile);
 
-const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || "";
-const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || "";
-
-async function exchangeCodeForToken(code: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const body = JSON.stringify({ client_id: GITHUB_CLIENT_ID, client_secret: GITHUB_CLIENT_SECRET, code });
-    const req = https.request(
-      { hostname: "github.com", path: "/login/oauth/access_token", method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json", "Content-Length": Buffer.byteLength(body) } },
-      (res) => {
-        let data = "";
-        res.on("data", (c) => (data += c));
-        res.on("end", () => {
-          try { resolve(JSON.parse(data).access_token || ""); } catch { reject(new Error("Token parse failed")); }
-        });
-      }
-    );
-    req.on("error", reject);
-    req.write(body);
-    req.end();
-  });
+interface ActiveDeviceFlow {
+  device: DeviceCodeResponse;
+  controller: AbortController;
+  startedAt: number;
 }
 
-async function fetchGitHubUser(token: string) {
-  return new Promise<{ login: string; avatar_url: string; name: string }>((resolve, reject) => {
-    const req = https.request(
-      { hostname: "api.github.com", path: "/user", method: "GET",
-        headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.v3+json", "User-Agent": "BreakGuard/1.0" } },
-      (res) => {
-        let data = "";
-        res.on("data", (c) => (data += c));
-        res.on("end", () => { try { resolve(JSON.parse(data)); } catch { reject(new Error("User parse failed")); } });
+let activeDeviceFlow: ActiveDeviceFlow | null = null;
+let lastDeviceFlowError: string | null = null;
+
+function currentAuth() {
+  return readStoredAuth();
+}
+
+async function beginDeviceFlow(): Promise<DeviceCodeResponse> {
+  const existingSession = currentAuth();
+  if (existingSession) {
+    throw new GitHubAuthError("Already signed in to GitHub.");
+  }
+  if (activeDeviceFlow) return activeDeviceFlow.device;
+
+  const device = await requestDeviceCode();
+  const controller = new AbortController();
+  lastDeviceFlowError = null;
+  activeDeviceFlow = { device, controller, startedAt: Date.now() };
+
+  completeDeviceFlow(device, { signal: controller.signal })
+    .catch((error: any) => {
+      if (!controller.signal.aborted) {
+        lastDeviceFlowError = error?.message || "GitHub login failed.";
       }
-    );
-    req.on("error", reject);
-    req.end();
-  });
+    })
+    .finally(() => {
+      if (activeDeviceFlow?.device.device_code === device.device_code) {
+        activeDeviceFlow = null;
+      }
+    });
+
+  return device;
+}
+
+function cancelDeviceFlow(): void {
+  activeDeviceFlow?.controller.abort();
+  activeDeviceFlow = null;
+  lastDeviceFlowError = null;
+}
+
+function requireAuthentication(res: http.ServerResponse): boolean {
+  if (currentAuth()) return true;
+  res.writeHead(401, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+  res.end(JSON.stringify({ error: "GitHub login required. Use the Login with GitHub button first." }));
+  return false;
 }
 
 export function startGuiServer(port = 4567, autoOpen = true) {
   // Find desktop dist if available locally
   const possibleDistPaths = [
     path.resolve(process.cwd(), "apps/desktop/dist"),
-    path.resolve(__dirname, "../../desktop/dist"),
-    path.resolve(__dirname, "../../../apps/desktop/dist"),
+    path.resolve(currentDirectory, "../../desktop/dist"),
+    path.resolve(currentDirectory, "../../../apps/desktop/dist"),
     path.resolve(process.cwd(), "dist/desktop"),
   ];
 
@@ -67,9 +88,22 @@ export function startGuiServer(port = 4567, autoOpen = true) {
   }
 
   const server = http.createServer(async (req, res) => {
-    // CORS headers
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    // This server is deliberately local-only: it serves the browser UI and
+    // keeps the OAuth token out of the frontend. Allow only our local UI
+    // origins when the Tauri dev shell sends a cross-origin request.
+    const origin = req.headers.origin;
+    if (
+      origin === "http://localhost:1420" ||
+      origin === "http://127.0.0.1:1420" ||
+      origin === "http://localhost:5173" ||
+      origin === "http://127.0.0.1:5173" ||
+      origin === "http://tauri.localhost" ||
+      origin === "tauri://localhost"
+    ) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+    }
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
     if (req.method === "OPTIONS") {
@@ -83,66 +117,65 @@ export function startGuiServer(port = 4567, autoOpen = true) {
     // API: Health check
     if (url.pathname === "/api/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", version: "1.2.0" }));
+      res.end(JSON.stringify({ status: "ok", version: "1.2.0", auth: "github-device-flow" }));
       return;
     }
 
-    // API: Auth status
-    if (url.pathname === "/api/auth/status") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ authenticated: !!githubAccessToken, user: githubUser }));
+    // API: Auth status. The access token never leaves this local server.
+    if (url.pathname === "/api/auth/status" && req.method === "GET") {
+      const session = currentAuth();
+      const flow = activeDeviceFlow
+        ? {
+            active: true,
+            expiresAt: activeDeviceFlow.startedAt + activeDeviceFlow.device.expires_in * 1000,
+          }
+        : null;
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ authenticated: !!session, user: session?.user || null, deviceFlow: flow, error: lastDeviceFlowError }));
       return;
     }
 
     // API: Logout
-    if (url.pathname === "/api/auth/logout") {
-      githubAccessToken = null;
-      githubUser = null;
-      res.writeHead(200, { "Content-Type": "application/json" });
+    if (url.pathname === "/api/auth/logout" && req.method === "POST") {
+      cancelDeviceFlow();
+      clearStoredAuth();
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
       res.end(JSON.stringify({ success: true }));
       return;
     }
 
-    // OAuth: Redirect to GitHub login
-    if (url.pathname === "/auth/github") {
-      if (!GITHUB_CLIENT_ID) {
-        res.writeHead(400, { "Content-Type": "text/html" });
-        res.end(`<h2>⚠️ GITHUB_CLIENT_ID not set.</h2><p>Run: <code>set GITHUB_CLIENT_ID=your_id && breakguard.exe ui</code></p>`);
-        return;
+    // Device Flow: request a code and begin server-side polling.
+    if (url.pathname === "/api/auth/device" && req.method === "POST") {
+      try {
+        const device = await beginDeviceFlow();
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(
+          JSON.stringify({
+            user_code: device.user_code,
+            verification_uri: device.verification_uri,
+            verification_uri_complete: device.verification_uri_complete,
+            expires_in: device.expires_in,
+            interval: device.interval || 5,
+          })
+        );
+      } catch (err: any) {
+        const status = err instanceof GitHubAuthError && err.message === "Already signed in to GitHub." ? 409 : 502;
+        res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ error: err?.message || "Device flow failed" }));
       }
-      const scope = "read:user,public_repo";
-      const redirectUri = encodeURIComponent(`http://localhost:${port}/auth/callback`);
-      const loginUrl = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&scope=${scope}&redirect_uri=${redirectUri}`;
-      res.writeHead(302, { Location: loginUrl });
-      res.end();
       return;
     }
 
-    // OAuth: Callback — exchange code for token
-    if (url.pathname === "/auth/callback") {
-      const code = url.searchParams.get("code");
-      if (!code) {
-        res.writeHead(400, { "Content-Type": "text/html" });
-        res.end(`<h2>❌ Missing OAuth code.</h2>`);
-        return;
-      }
-      try {
-        const token = await exchangeCodeForToken(code);
-        if (!token) throw new Error("Empty token received");
-        githubAccessToken = token;
-        githubUser = await fetchGitHubUser(token);
-        // Redirect back to dashboard with success
-        res.writeHead(302, { Location: "/?auth=success" });
-        res.end();
-      } catch (err: any) {
-        res.writeHead(500, { "Content-Type": "text/html" });
-        res.end(`<h2>❌ Auth failed: ${err.message}</h2><a href="/">← Back</a>`);
-      }
+    if (url.pathname === "/api/auth/device" && req.method === "DELETE") {
+      cancelDeviceFlow();
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ success: true }));
       return;
     }
 
     // API: Discovered & Recent Workspaces
     if (url.pathname === "/api/projects") {
+      if (!requireAuthentication(res)) return;
       try {
         const results: Array<{ name: string; path: string; isCurrent: boolean; lockfile: string | null }> = [];
         const cwd = process.cwd();
@@ -198,6 +231,7 @@ export function startGuiServer(port = 4567, autoOpen = true) {
 
     // API: Local project scan
     if (url.pathname === "/api/scan" && req.method === "POST") {
+      if (!requireAuthentication(res)) return;
       let body = "";
       req.on("data", (chunk) => (body += chunk));
       req.on("end", async () => {
@@ -218,6 +252,7 @@ export function startGuiServer(port = 4567, autoOpen = true) {
 
     // API: Remote GitHub QA Analysis
     if (url.pathname === "/api/github" && req.method === "POST") {
+      if (!requireAuthentication(res)) return;
       let body = "";
       req.on("data", (chunk) => (body += chunk));
       req.on("end", async () => {
@@ -228,8 +263,9 @@ export function startGuiServer(port = 4567, autoOpen = true) {
             res.end(JSON.stringify({ error: "Missing repoUrl parameter" }));
             return;
           }
-          // Use stored OAuth token if available, fallback to provided token
-          const token = githubAccessToken || parsed.token || undefined;
+          // Use the persisted OAuth token if available. A caller-supplied token
+          // remains supported for CI/manual use, but is never stored by us.
+          const token = currentAuth()?.accessToken || parsed.token || undefined;
           const report = await analyzeGitHubRepo(parsed.repoUrl, { token });
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify(report));
@@ -267,26 +303,21 @@ export function startGuiServer(port = 4567, autoOpen = true) {
     res.end(getEmbeddedDashboardHtml());
   });
 
-  server.listen(port, () => {
+    // Bind only to loopback. This server handles a GitHub bearer token.
+    server.listen(port, "127.0.0.1", () => {
     console.log(chalk.bold.cyan("\n======================================================="));
     console.log(chalk.bold.white("  BreakGuard 🛡️ — Polished Desktop GUI Dashboard"));
     console.log(chalk.gray("  Zero-Configuration Standalone Desktop Application"));
     console.log(chalk.bold.cyan("=======================================================\n"));
 
-    console.log(chalk.green(`✔ Desktop GUI server active at: `) + chalk.underline.cyan(`http://localhost:${port}`));
+    console.log(chalk.green(`✔ Desktop GUI server active at: `) + chalk.underline.cyan(`http://127.0.0.1:${port}`));
     console.log(chalk.yellow("✔ Opening polished graphical interface in your browser...\n"));
     console.log(chalk.gray("  (Keep this console window open while using BreakGuard."));
     console.log(chalk.gray("   Press Ctrl+C anytime to exit)\n"));
 
     if (autoOpen) {
-      const openUrl = `http://localhost:${port}`;
-      if (process.platform === "win32") {
-        exec(`start ${openUrl}`);
-      } else if (process.platform === "darwin") {
-        exec(`open ${openUrl}`);
-      } else {
-        exec(`xdg-open ${openUrl}`);
-      }
+      const openUrl = `http://127.0.0.1:${port}`;
+      openExternalUrl(openUrl);
     }
   });
 
@@ -343,6 +374,26 @@ function getEmbeddedDashboardHtml(): string {
       <div id="authWidget"></div>
     </div>
   </header>
+
+  <div id="authGate" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
+    <div class="w-full max-w-lg rounded-2xl bg-slate-900 border border-blue-500/40 shadow-2xl p-7">
+      <div class="flex items-center gap-3 text-blue-300 font-bold text-base">
+        <div class="p-2 rounded-xl bg-blue-600/20 border border-blue-500/30">🔒</div>
+        Sign in with GitHub to continue
+      </div>
+      <p class="mt-3 text-sm text-slate-300 leading-relaxed">
+        BreakGuard uses GitHub Device Flow. We will show a one-time code, open GitHub, and wait until you approve BreakGuard.
+      </p>
+      <div class="mt-4 rounded-xl bg-slate-950/80 border border-slate-800 p-3 text-xs text-slate-400">
+        Your GitHub password and access token are never entered into this dashboard.
+      </div>
+      <div class="mt-6 flex justify-end">
+        <button onclick="startDeviceLogin()" class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white cursor-pointer">
+          Login with GitHub
+        </button>
+      </div>
+    </div>
+  </div>
 
   <!-- Main Content Layout -->
   <main class="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
@@ -409,39 +460,114 @@ function getEmbeddedDashboardHtml(): string {
 
   <script>
     // ── Auth ────────────────────────────────────────────────────────────────
-    async function loadAuthStatus() {
-      try {
-        const res = await fetch('/api/auth/status');
-        const data = await res.json();
-        const widget = document.getElementById('authWidget');
-        if (data.authenticated && data.user) {
-          widget.innerHTML = \`
-            <div class="flex items-center gap-2">
-              <img src="\${data.user.avatar_url}" class="w-7 h-7 rounded-full border border-slate-600" />
-              <span class="text-xs font-semibold text-slate-200">\${data.user.login}</span>
-              <button onclick="logout()" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] font-semibold text-slate-400 border border-slate-700 transition cursor-pointer">Sign out</button>
-            </div>\`;
-        } else {
-          widget.innerHTML = \`
-            <a href="/auth/github" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-semibold text-slate-200 transition" title="Login to use GitHub token automatically">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-              Login with GitHub
-            </a>\`;
-        }
-      } catch {}
+    let deviceFlowActive = false;
+    let devicePollTimer = null;
+
+    function escapeHtml(value) {
+      return String(value == null ? '' : value).replace(/[&<>"']/g, function (character) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character];
+      });
     }
 
-    async function logout() {
-      await fetch('/api/auth/logout');
+    async function loadAuthStatus() {
+      try {
+        const res = await fetch('/api/auth/status', { cache: 'no-store' });
+        const data = await res.json();
+        const widget = document.getElementById('authWidget');
+        if (!widget) return;
+        const gate = document.getElementById('authGate');
+        if (data.authenticated && data.user) {
+          if (gate) gate.classList.add('hidden');
+          clearInterval(devicePollTimer);
+          deviceFlowActive = false;
+          widget.innerHTML = '<div class="flex items-center gap-2">' +
+            '<span class="w-2 h-2 rounded-full bg-emerald-400"></span>' +
+            '<span class="text-xs font-semibold text-slate-200">' + escapeHtml(data.user.login) + '</span>' +
+            '<button onclick="logout()" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] font-semibold text-slate-400 border border-slate-700 transition cursor-pointer">Sign out</button>' +
+            '</div>';
+        } else if (deviceFlowActive) {
+          // Keep the device code visible while GitHub authorization is pending.
+        } else {
+          if (gate) gate.classList.remove('hidden');
+          if (data.error) {
+            widget.innerHTML = '<div class="flex items-center gap-2"><span class="text-xs text-red-400">❌ ' + escapeHtml(data.error) + '</span>' +
+              '<button onclick="startDeviceLogin()" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-200 border border-slate-700 cursor-pointer">Try again</button></div>';
+          } else {
+            widget.innerHTML = '<button onclick="startDeviceLogin()" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-semibold text-slate-200 transition cursor-pointer" title="Login with GitHub">' +
+              'Login with GitHub</button>';
+          }
+        }
+      } catch {
+        // The dashboard can still be used offline when the auth server is absent.
+      }
+    }
+
+    async function startDeviceLogin() {
+      const gate = document.getElementById('authGate');
+      if (gate) gate.classList.add('hidden');
+      const widget = document.getElementById('authWidget');
+      widget.innerHTML = '<span class="text-xs text-slate-400 animate-pulse">Connecting to GitHub...</span>';
+      try {
+        const res = await fetch('/api/auth/device', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'GitHub login could not start');
+
+        deviceFlowActive = true;
+        const verificationUri = String(data.verification_uri || 'https://github.com/login/device');
+        const safeUri = verificationUri.indexOf('https://github.com/') === 0
+          ? verificationUri
+          : 'https://github.com/login/device';
+        try {
+          window.open(safeUri, '_blank', 'noopener,noreferrer');
+        } catch (_) {}
+        widget.innerHTML = '<div class="flex items-center gap-2 p-2 rounded-xl bg-slate-800 border border-slate-600">' +
+          '<div class="text-center">' +
+          '<p class="text-[10px] text-slate-400 mb-1">Copy this code, then sign in on GitHub</p>' +
+          '<div class="flex items-center gap-2">' +
+          '<code class="px-3 py-1 rounded-lg bg-black text-emerald-400 font-mono font-bold text-sm tracking-widest select-all">' + escapeHtml(data.user_code) + '</code>' +
+          '<button onclick="navigator.clipboard.writeText(' + JSON.stringify(String(data.user_code)) + ')" class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-[10px] text-slate-300 cursor-pointer">Copy</button>' +
+          '<a href="' + safeUri + '" target="_blank" rel="noopener noreferrer" class="px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-[10px] text-white font-semibold">Open GitHub</a>' +
+          '</div></div>' +
+          '<button onclick="cancelDeviceLogin()" class="text-slate-500 hover:text-slate-300 text-xs cursor-pointer">✕</button></div>';
+
+        clearInterval(devicePollTimer);
+        devicePollTimer = setInterval(async function () {
+          try {
+            const res = await fetch('/api/auth/status', { cache: 'no-store' });
+            const status = await res.json();
+            if (status.authenticated) {
+              clearInterval(devicePollTimer);
+              deviceFlowActive = false;
+              loadAuthStatus();
+            } else if (status.error) {
+              clearInterval(devicePollTimer);
+              deviceFlowActive = false;
+              loadAuthStatus();
+            }
+          } catch (_) {}
+        }, 3000);
+      } catch (err) {
+        deviceFlowActive = false;
+        widget.innerHTML = '<span class="text-xs text-red-400">❌ ' + escapeHtml(err && err.message ? err.message : 'GitHub login failed') + '</span>';
+        setTimeout(loadAuthStatus, 3000);
+      }
+    }
+
+    async function cancelDeviceLogin() {
+      clearInterval(devicePollTimer);
+      deviceFlowActive = false;
+      await fetch('/api/auth/device', { method: 'DELETE' }).catch(function () {});
       loadAuthStatus();
     }
 
-    // Check auth on page load
-    loadAuthStatus();
-    // Re-check if returning from OAuth (/?auth=success)
-    if (new URLSearchParams(location.search).get('auth') === 'success') {
-      history.replaceState({}, '', '/');
+    async function logout() {
+      clearInterval(devicePollTimer);
+      deviceFlowActive = false;
+      await fetch('/api/auth/logout', { method: 'POST' });
+      loadAuthStatus();
     }
+
+    loadAuthStatus();
 
     // ── GitHub Audit ────────────────────────────────────────────────────────
     async function runGitHubAudit() {

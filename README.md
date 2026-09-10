@@ -25,7 +25,7 @@ BreakGuard is engineered with a modular, scoped architecture offering 3 distinct
    - `breakguard tree [path]`: ASCII terminal visual tree with risk-colored nodes.
    - `breakguard audit [path] --json`: Structured JSON output for CI/CD pipelines.
 2. **Zero-Dependency Standalone Binary (`breakguard.exe`):** Compiled via Bun native compiler into a standalone single-file Windows binary without requiring Node.js on host systems.
-3. **Interactive Visual Dashboard & Desktop GUI (`apps/web` & `apps/desktop`):** Next.js 15 web app and lightweight Tauri v2 desktop GUI with `@xyflow/react` dependency graphs, side drawer inspectors, and ephemeral sandbox verification.
+3. **Interactive Visual Dashboard & Desktop GUI (`apps/web` & `apps/desktop`):** Next.js 16 web app and lightweight Tauri v2 desktop GUI with `@xyflow/react` dependency graphs, side drawer inspectors, and ephemeral sandbox verification.
 
 ---
 
@@ -55,7 +55,7 @@ BreakGuard is engineered with a modular, scoped architecture offering 3 distinct
 ▼
 ┌───────────────────────────────┬───────────────────────────────┬───────────────────────────────┐
 │         Target 1: CLI         │    Target 2: Standalone .exe  │   Target 3: Desktop & Web UI  │
-│  npx breakguard scan / tree   │      dist/breakguard.exe      │    Next.js 15 & Tauri v2 GUI  │
+│  npx breakguard scan / tree   │      dist/breakguard.exe      │    Next.js 16 & Tauri v2 GUI  │
 └───────────────────────────────┴───────────────────────────────┴───────────────────────────────┘
 ```
 
@@ -66,7 +66,7 @@ BreakGuard is engineered with a modular, scoped architecture offering 3 distinct
 ```text
 breakguard/
 ├── apps/
-│   ├── web/                     # Next.js 15+ App Router Web Dashboard
+│   ├── web/                     # Next.js 16+ App Router Web Dashboard
 │   └── desktop/                 # Desktop GUI using Tauri v2 & React Flow
 ├── packages/
 │   ├── core/                    # Unified engine uniting AST, lockfiles, & risk scoring
@@ -88,8 +88,18 @@ breakguard/
 
 #### 1. Running the CLI
 ```bash
-# Scan current directory
+# Run the CLI
 node packages/cli/bin/breakguard.js scan .
+
+# Sign in once with GitHub Device Flow (opens your browser)
+node packages/cli/bin/breakguard.js auth login
+
+# Check or remove the saved GitHub login
+node packages/cli/bin/breakguard.js auth status
+node packages/cli/bin/breakguard.js auth logout
+
+# Run a GitHub repository audit using the saved login
+node packages/cli/bin/breakguard.js repo owner/repository
 
 # Render visual terminal ASCII dependency tree
 node packages/cli/bin/breakguard.js tree .
@@ -108,9 +118,22 @@ pnpm build:exe
 ./dist/breakguard.exe tree .
 ```
 
-#### 3. Web Dashboard & Desktop GUI
+### GitHub Authentication
+
+BreakGuard uses GitHub OAuth App **Device Flow** for the CLI, the local browser dashboard, and the web dashboard. In GitHub Developer Settings, enable **Device flow** for the OAuth App whose client ID is configured for BreakGuard. The public client ID does not require a client secret.
+
+- CLI: `breakguard auth login` prints a one-time code, opens GitHub, and stores the verified session in the user profile.
+- Local GUI: start `breakguard ui`; the lock screen asks the user to sign in and the header shows the login state.
+- Web GUI: the dashboard shows the same login gate and stores its session in HTTP-only cookies.
+- GitHub tokens are not sent to the frontend; the local server or Next.js route uses them for API requests.
+
+For a custom OAuth App, set `BREAKGUARD_GITHUB_CLIENT_ID` before starting BreakGuard. `GITHUB_TOKEN` or `--token` remain available for CI/manual use.
+
+---
+
+### 3. Web Dashboard & Desktop GUI
 ```bash
-# Launch Next.js 15 Web Dashboard (http://localhost:3000)
+# Launch Next.js 16 Web Dashboard (http://localhost:4567)
 pnpm dev
 
 # Build the desktop GUI bundle

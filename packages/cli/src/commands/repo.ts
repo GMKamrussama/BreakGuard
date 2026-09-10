@@ -1,6 +1,7 @@
 import chalk from "chalk";
 import ora from "ora";
 import { analyzeGitHubRepo } from "@breakguard/core";
+import { readStoredAuth } from "../auth.js";
 
 export interface RepoCommandOptions {
   token?: string;
@@ -8,6 +9,12 @@ export interface RepoCommandOptions {
 }
 
 export async function repoCommand(repoUrlOrSlug: string, options: RepoCommandOptions = {}) {
+  const storedToken = readStoredAuth()?.accessToken;
+  const token = options.token || storedToken || process.env.GITHUB_TOKEN;
+  if (!token) {
+    throw new Error('GitHub login required. Run "breakguard auth login" first, or provide --token for CI/manual use.');
+  }
+
   const spinner = ora({
     text: `Connecting to GitHub API for "${repoUrlOrSlug}"...`,
     color: "cyan",
@@ -15,7 +22,7 @@ export async function repoCommand(repoUrlOrSlug: string, options: RepoCommandOpt
 
   try {
     const report = await analyzeGitHubRepo(repoUrlOrSlug, {
-      token: options.token,
+      token,
       onProgress: (msg) => {
         spinner.text = msg;
       },

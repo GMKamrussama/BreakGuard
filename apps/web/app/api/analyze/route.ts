@@ -3,9 +3,14 @@ import { parseLockfileString, enrichDependencyTree } from "@breakguard/lockfile-
 import { scanSourceCode, aggregateScanResults } from "@breakguard/ast-scanner";
 import { calculateBreakingRiskScore } from "@breakguard/risk-engine";
 import type { LockfileType, ProjectAnalysisReport } from "@breakguard/core-types";
+import { readWebAuth } from "@/lib/github-auth";
 
 export async function POST(req: Request) {
   try {
+    const auth = await readWebAuth();
+    if (!auth.token || !auth.user) {
+      return NextResponse.json({ error: "GitHub login required. Please sign in first." }, { status: 401 });
+    }
     const body = await req.json();
     const {
       packageJson,
