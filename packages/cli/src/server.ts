@@ -344,113 +344,212 @@ function getEmbeddedDashboardHtml(): string {
       }
     }
   </script>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     body { font-family: 'Inter', sans-serif; background-color: #030712; color: #f3f4f6; }
     pre, code { font-family: 'JetBrains Mono', monospace; }
+    .glass-panel {
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(51, 65, 85, 0.6);
+    }
+    .glass-card {
+      background: linear-gradient(180deg, rgba(30, 41, 59, 0.6) 0%, rgba(15, 23, 42, 0.8) 100%);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(51, 65, 85, 0.6);
+    }
   </style>
 </head>
-<body class="min-h-screen flex flex-col antialiased">
+<body class="min-h-screen flex flex-col antialiased selection:bg-blue-500/30 selection:text-blue-200">
   <!-- Top Header Navbar -->
-  <header class="h-16 border-b border-slate-800 bg-slate-950/80 backdrop-blur-md px-6 flex items-center justify-between sticky top-0 z-40">
+  <header class="h-16 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-xl px-6 flex items-center justify-between sticky top-0 z-40">
     <div class="flex items-center gap-3">
-      <div class="w-10 h-10 rounded-xl bg-blue-600/10 border border-blue-500/30 flex items-center justify-center text-blue-400 font-bold text-xl shadow-lg shadow-blue-500/10">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500/20 to-indigo-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400 font-bold text-xl shadow-lg shadow-blue-500/10">
         🛡️
       </div>
       <div>
-        <h1 class="text-sm font-bold text-slate-100 flex items-center gap-2">
+        <h1 class="text-sm font-bold text-slate-100 flex items-center gap-2 tracking-tight">
           BreakGuard
-          <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">v1.0.0</span>
+          <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">v1.2.0</span>
         </h1>
         <p class="text-xs text-slate-400">AST Codebase & GitHub QA Analyzer</p>
       </div>
     </div>
     <div class="flex items-center gap-3">
-      <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+      <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm shadow-emerald-500/10">
         <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
         Engine Online
       </span>
-      <!-- Auth Status injected by JS -->
-      <div id="authWidget"></div>
+      <!-- Auth Status Header Widget -->
+      <div id="authWidget" class="flex items-center gap-2"></div>
     </div>
   </header>
 
-  <div id="authGate" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-    <div class="w-full max-w-lg rounded-2xl bg-slate-900 border border-blue-500/40 shadow-2xl p-7">
+  <!-- Initial Sign In Gate Modal -->
+  <div id="authGate" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
+    <div class="w-full max-w-lg rounded-2xl bg-slate-900/95 border border-blue-500/30 shadow-[0_0_50px_rgba(59,130,246,0.15)] p-7 space-y-5">
       <div class="flex items-center gap-3 text-blue-300 font-bold text-base">
-        <div class="p-2 rounded-xl bg-blue-600/20 border border-blue-500/30">🔒</div>
-        Sign in with GitHub to continue
+        <div class="p-2.5 rounded-xl bg-blue-600/20 border border-blue-500/30 text-blue-400">
+          🔒
+        </div>
+        <div>
+          <div class="text-slate-100 font-bold">Sign in with GitHub to continue</div>
+          <div class="text-xs text-slate-400 font-normal">Activate authenticated API access & profile badge</div>
+        </div>
       </div>
-      <p class="mt-3 text-sm text-slate-300 leading-relaxed">
-        BreakGuard uses GitHub Device Flow. We will show a one-time code, open GitHub, and wait until you approve BreakGuard.
+      <p class="text-xs text-slate-300 leading-relaxed bg-slate-950/60 border border-slate-800 p-3.5 rounded-xl">
+        BreakGuard uses secure GitHub <strong>Device Flow</strong>. We will show you a one-time authorization code, open GitHub in your browser, and wait until you approve BreakGuard. No password or personal secret is ever entered into BreakGuard.
       </p>
-      <div class="mt-4 rounded-xl bg-slate-950/80 border border-slate-800 p-3 text-xs text-slate-400">
-        Your GitHub password and access token are never entered into this dashboard.
-      </div>
-      <div class="mt-6 flex justify-end">
-        <button onclick="startDeviceLogin()" class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white cursor-pointer">
-          Login with GitHub
+      <div class="flex items-center justify-end gap-3 pt-2">
+        <button onclick="startDeviceLogin()" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-lg shadow-blue-500/25 text-xs font-bold text-white transition flex items-center gap-2 cursor-pointer">
+          <span>Login with GitHub</span>
+          <span>➔</span>
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Breathtaking Central Device Code Modal -->
+  <div id="deviceCodeModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4">
+    <div class="w-full max-w-md rounded-2xl bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 border border-blue-500/40 shadow-[0_0_60px_rgba(59,130,246,0.2)] p-6 space-y-5 relative">
+      <button onclick="cancelDeviceLogin()" class="absolute top-4 right-4 text-slate-400 hover:text-slate-200 transition p-1.5 rounded-lg hover:bg-slate-800 cursor-pointer text-sm" title="Cancel login">
+        ✕
+      </button>
+      
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-blue-400 text-lg shadow-inner">
+          🔑
+        </div>
+        <div>
+          <h3 class="text-sm font-bold text-slate-100">Authorize GitHub Device</h3>
+          <p class="text-xs text-slate-400 mt-0.5">Enter code on GitHub to link BreakGuard</p>
+        </div>
+      </div>
+
+      <!-- High-visibility glowing Code Display Box -->
+      <div class="rounded-xl bg-slate-950 border border-slate-800 p-4 text-center space-y-2 relative group hover:border-emerald-500/40 transition">
+        <div class="text-[10px] uppercase font-mono tracking-widest text-slate-400 font-semibold">
+          One-Time Device Code
+        </div>
+        <div id="deviceCodeDisplay" onclick="copyActiveDeviceCode(this)" title="Click to copy code"
+          class="text-3xl sm:text-4xl font-extrabold font-mono tracking-[0.25em] text-emerald-300 select-all cursor-pointer py-1 transition group-hover:scale-105">
+          ----
+        </div>
+        <div class="text-[11px] text-slate-500">
+          Click the code or use the copy button below
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="grid grid-cols-2 gap-2.5">
+        <button id="copyCodeBtn" onclick="copyActiveDeviceCode(this)"
+          class="flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-200 transition cursor-pointer shadow-sm">
+          <span>📋</span>
+          <span id="copyBtnText">Copy Code</span>
+        </button>
+
+        <a id="openGitHubBtn" href="https://github.com/login/device" target="_blank" rel="noopener noreferrer"
+          class="flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-xs font-bold text-white transition shadow-lg shadow-blue-500/25 cursor-pointer">
+          <span>Open GitHub</span>
+          <span>↗</span>
+        </a>
+      </div>
+
+      <!-- Live Waiting Spinner -->
+      <div class="flex items-center justify-center gap-2.5 pt-1 text-xs text-slate-400">
+        <span class="w-2.5 h-2.5 rounded-full bg-blue-400 animate-ping"></span>
+        <span>Waiting for you to authorize on GitHub...</span>
       </div>
     </div>
   </div>
 
   <!-- Main Content Layout -->
   <main class="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
-    <!-- Top Action Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <!-- Remote GitHub QA Card -->
-      <div class="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-blue-500/50 transition shadow-xl space-y-3">
+    <!-- Top Action Cards (The 2 primary interactive modules) -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+      <!-- 1. Remote GitHub QA Card -->
+      <div class="glass-card p-6 rounded-2xl hover:border-blue-500/50 transition-all duration-300 shadow-xl shadow-blue-500/5 hover:shadow-blue-500/10 space-y-4">
         <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2.5">
-            <span class="text-xl">🌐</span>
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-xl">
+              🌐
+            </div>
             <div>
-              <h2 class="text-sm font-bold text-slate-100">GitHub Repository QA Audit</h2>
-              <p class="text-xs text-slate-400">Audit remote repo for GitHub Developer Program badge</p>
+              <h2 class="text-sm font-bold text-slate-100 tracking-tight">GitHub Repository QA Audit</h2>
+              <p class="text-xs text-slate-400">Audit remote repo & generate Developer Program badge</p>
             </div>
           </div>
-          <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20">REST API</span>
+          <span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+            REST API
+          </span>
         </div>
-        <div class="flex gap-2">
-          <input id="githubRepoInput" type="text" placeholder="e.g. facebook/react or https://github.com/..." value="facebook/react"
-            class="flex-1 rounded-xl bg-black/60 border border-slate-700 px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 font-mono">
-          <button onclick="runGitHubAudit()" id="githubAuditBtn"
-            class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white transition flex items-center gap-1.5 shadow-lg shadow-blue-500/20 cursor-pointer">
-            Audit Repo
-          </button>
+
+        <div class="space-y-2">
+          <div class="flex gap-2">
+            <input id="githubRepoInput" type="text" placeholder="e.g. facebook/react or owner/repo" value="facebook/react"
+              class="flex-1 rounded-xl bg-black/60 border border-slate-700/80 px-3.5 py-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-mono transition">
+            <button onclick="runGitHubAudit()" id="githubAuditBtn"
+              class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-xs font-semibold text-white transition flex items-center gap-1.5 shadow-lg shadow-blue-500/20 cursor-pointer shrink-0">
+              Audit Repo
+            </button>
+          </div>
+          
+          <!-- Preset quick-pick suggestions -->
+          <div class="flex items-center gap-2 text-[11px] text-slate-400">
+            <span>Quick:</span>
+            <button type="button" onclick="setRepoInput('facebook/react')" class="hover:text-blue-400 transition font-mono underline decoration-slate-700">facebook/react</button>
+            <span>•</span>
+            <button type="button" onclick="setRepoInput('expressjs/express')" class="hover:text-blue-400 transition font-mono underline decoration-slate-700">express</button>
+            <span>•</span>
+            <button type="button" onclick="setRepoInput('vitejs/vite')" class="hover:text-blue-400 transition font-mono underline decoration-slate-700">vite</button>
+          </div>
         </div>
       </div>
 
-      <!-- Local Codebase Scanner Card -->
-      <div class="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-emerald-500/50 transition shadow-xl space-y-3">
+      <!-- 2. Local Codebase Scanner Card -->
+      <div class="glass-card p-6 rounded-2xl hover:border-emerald-500/50 transition-all duration-300 shadow-xl shadow-emerald-500/5 hover:shadow-emerald-500/10 space-y-4">
         <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2.5">
-            <span class="text-xl">📁</span>
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-xl">
+              📁
+            </div>
             <div>
-              <h2 class="text-sm font-bold text-slate-100">Local Codebase AST Scanner</h2>
+              <h2 class="text-sm font-bold text-slate-100 tracking-tight">Local Codebase AST Scanner</h2>
               <p class="text-xs text-slate-400">Scan lockfile, AST call sites & breaking risk score</p>
             </div>
           </div>
-          <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">SWC AST</span>
+          <span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+            SWC AST
+          </span>
         </div>
-        <div class="flex gap-2">
-          <input id="localPathInput" type="text" placeholder="Local project directory (.)" value="."
-            class="flex-1 rounded-xl bg-black/60 border border-slate-700 px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-emerald-500 font-mono">
-          <button onclick="runLocalScan()" id="localScanBtn"
-            class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white transition flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 cursor-pointer">
-            Scan Local
-          </button>
+
+        <div class="space-y-2">
+          <div class="flex gap-2">
+            <input id="localPathInput" type="text" placeholder="Directory path (default: .)" value="."
+              class="flex-1 rounded-xl bg-black/60 border border-slate-700/80 px-3.5 py-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 font-mono transition">
+            <button onclick="runLocalScan()" id="localScanBtn"
+              class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-xs font-semibold text-white transition flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 cursor-pointer shrink-0">
+              Scan Local
+            </button>
+          </div>
+
+          <!-- Preset quick-pick suggestions -->
+          <div class="flex items-center gap-2 text-[11px] text-slate-400">
+            <span>Target:</span>
+            <button type="button" onclick="setLocalPath('.')" class="hover:text-emerald-400 transition font-mono underline decoration-slate-700">. (Current Workspace)</button>
+          </div>
         </div>
       </div>
     </div>
 
     <!-- Live Results Container -->
-    <div id="resultsContainer" class="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-6">
-      <div class="text-center py-12 text-slate-500 space-y-2" id="placeholderView">
+    <div id="resultsContainer" class="p-6 rounded-2xl bg-slate-900/60 border border-slate-800/80 shadow-2xl space-y-6">
+      <div class="text-center py-12 text-slate-500 space-y-3" id="placeholderView">
         <div class="text-4xl animate-bounce">⚡</div>
         <h3 class="text-base font-semibold text-slate-300">Ready to Analyze</h3>
-        <p class="text-xs max-w-md mx-auto text-slate-400">
-          Enter a remote GitHub repository or click "Scan Local" to generate full AST breaking changes, security vulnerabilities, and official QA scores.
+        <p class="text-xs max-w-md mx-auto text-slate-400 leading-relaxed">
+          Enter a remote GitHub repository or click "Scan Local" to generate AST breaking changes, security vulnerabilities, and official QA score reports.
         </p>
       </div>
 
@@ -459,8 +558,8 @@ function getEmbeddedDashboardHtml(): string {
   </main>
 
   <script>
-    // ── Auth ────────────────────────────────────────────────────────────────
-    let deviceFlowActive = false;
+    // ── Global Auth State ───────────────────────────────────────────────────
+    let currentActiveCode = '';
     let devicePollTimer = null;
 
     function escapeHtml(value) {
@@ -469,113 +568,202 @@ function getEmbeddedDashboardHtml(): string {
       });
     }
 
+    function setRepoInput(val) {
+      document.getElementById('githubRepoInput').value = val;
+    }
+
+    function setLocalPath(val) {
+      document.getElementById('localPathInput').value = val;
+    }
+
+    // ── Guaranteed Multi-Fallback Clipboard Copy ────────────────────────────
+    function copyTextToClipboard(text, triggerBtn) {
+      if (!text) return;
+      let success = false;
+
+      const triggerEl = triggerBtn || document.getElementById('copyCodeBtn');
+
+      function showFeedback() {
+        if (!triggerEl) return;
+        const originalHtml = triggerEl.innerHTML;
+        triggerEl.innerHTML = '<span class="text-emerald-300 font-bold">✓ Copied!</span>';
+        triggerEl.classList.add('border-emerald-500', 'bg-emerald-950/40');
+        setTimeout(() => {
+          triggerEl.innerHTML = originalHtml;
+          triggerEl.classList.remove('border-emerald-500', 'bg-emerald-950/40');
+        }, 2200);
+      }
+
+      // 1. Try Modern Clipboard API
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(() => {
+          showFeedback();
+        }).catch(() => {
+          execCopyFallback(text, showFeedback);
+        });
+        return;
+      }
+
+      // 2. Try Fallback execCommand
+      execCopyFallback(text, showFeedback);
+    }
+
+    function execCopyFallback(text, onSuccess) {
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-9999px';
+        textArea.style.top = '-9999px';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        const successful = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        if (successful) {
+          if (onSuccess) onSuccess();
+        } else {
+          prompt('Copy code manually:', text);
+        }
+      } catch (e) {
+        prompt('Copy code manually:', text);
+      }
+    }
+
+    function copyActiveDeviceCode(el) {
+      copyTextToClipboard(currentActiveCode, el);
+    }
+
+    // ── Auth Status & Flow Management ───────────────────────────────────────
     async function loadAuthStatus() {
       try {
         const res = await fetch('/api/auth/status', { cache: 'no-store' });
         const data = await res.json();
         const widget = document.getElementById('authWidget');
-        if (!widget) return;
         const gate = document.getElementById('authGate');
+        const modal = document.getElementById('deviceCodeModal');
+
         if (data.authenticated && data.user) {
           if (gate) gate.classList.add('hidden');
+          if (modal) modal.classList.add('hidden');
           clearInterval(devicePollTimer);
-          deviceFlowActive = false;
-          widget.innerHTML = '<div class="flex items-center gap-2">' +
-            '<span class="w-2 h-2 rounded-full bg-emerald-400"></span>' +
-            '<span class="text-xs font-semibold text-slate-200">' + escapeHtml(data.user.login) + '</span>' +
-            '<button onclick="logout()" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] font-semibold text-slate-400 border border-slate-700 transition cursor-pointer">Sign out</button>' +
-            '</div>';
-        } else if (deviceFlowActive) {
-          // Keep the device code visible while GitHub authorization is pending.
+          currentActiveCode = '';
+
+          if (widget) {
+            widget.innerHTML = '<div class="flex items-center gap-2 px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 shadow-sm">' +
+              '<span class="w-2 h-2 rounded-full bg-emerald-400"></span>' +
+              '<span class="text-xs font-semibold text-slate-200">' + escapeHtml(data.user.login) + '</span>' +
+              '<button onclick="logout()" class="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] font-semibold text-slate-400 border border-slate-700 transition cursor-pointer">Sign out</button>' +
+              '</div>';
+          }
         } else {
-          if (gate) gate.classList.remove('hidden');
-          if (data.error) {
-            widget.innerHTML = '<div class="flex items-center gap-2"><span class="text-xs text-red-400">❌ ' + escapeHtml(data.error) + '</span>' +
-              '<button onclick="startDeviceLogin()" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-200 border border-slate-700 cursor-pointer">Try again</button></div>';
+          if (currentActiveCode) {
+            // Keep deviceCodeModal visible if code is active
+            if (widget) {
+              widget.innerHTML = '<button onclick="reopenDeviceModal()" class="px-3 py-1 rounded-xl bg-blue-600/20 border border-blue-500/40 text-blue-300 text-xs font-semibold hover:bg-blue-600/30 transition flex items-center gap-1.5 cursor-pointer">' +
+                '<span>🔑 Code: ' + escapeHtml(currentActiveCode) + '</span>' +
+                '</button>';
+            }
           } else {
-            widget.innerHTML = '<button onclick="startDeviceLogin()" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-semibold text-slate-200 transition cursor-pointer" title="Login with GitHub">' +
-              'Login with GitHub</button>';
+            if (widget) {
+              widget.innerHTML = '<button onclick="startDeviceLogin()" class="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-xs font-bold text-white transition shadow-sm cursor-pointer" title="Login with GitHub">' +
+                'Login with GitHub</button>';
+            }
           }
         }
-      } catch {
-        // The dashboard can still be used offline when the auth server is absent.
-      }
+      } catch {}
     }
 
     async function startDeviceLogin() {
       const gate = document.getElementById('authGate');
       if (gate) gate.classList.add('hidden');
+
       const widget = document.getElementById('authWidget');
-      widget.innerHTML = '<span class="text-xs text-slate-400 animate-pulse">Connecting to GitHub...</span>';
+      if (widget) widget.innerHTML = '<span class="text-xs text-slate-400 animate-pulse">Requesting GitHub code...</span>';
+
       try {
         const res = await fetch('/api/auth/device', { method: 'POST' });
         const data = await res.json();
         if (!res.ok || data.error) throw new Error(data.error || 'GitHub login could not start');
 
-        deviceFlowActive = true;
+        currentActiveCode = String(data.user_code || '');
         const verificationUri = String(data.verification_uri || 'https://github.com/login/device');
-        const safeUri = verificationUri.indexOf('https://github.com/') === 0
-          ? verificationUri
-          : 'https://github.com/login/device';
+        const safeUri = verificationUri.indexOf('https://github.com/') === 0 ? verificationUri : 'https://github.com/login/device';
+
+        // Update Modal elements
+        const codeDisplay = document.getElementById('deviceCodeDisplay');
+        if (codeDisplay) codeDisplay.innerText = currentActiveCode;
+
+        const openBtn = document.getElementById('openGitHubBtn');
+        if (openBtn) openBtn.href = safeUri;
+
+        // Show centered Device Code Modal
+        const modal = document.getElementById('deviceCodeModal');
+        if (modal) modal.classList.remove('hidden');
+
+        // Automatically open GitHub in new tab
         try {
           window.open(safeUri, '_blank', 'noopener,noreferrer');
         } catch (_) {}
-        widget.innerHTML = '<div class="flex items-center gap-2 p-2 rounded-xl bg-slate-800 border border-slate-600">' +
-          '<div class="text-center">' +
-          '<p class="text-[10px] text-slate-400 mb-1">Copy this code, then sign in on GitHub</p>' +
-          '<div class="flex items-center gap-2">' +
-          '<code class="px-3 py-1 rounded-lg bg-black text-emerald-400 font-mono font-bold text-sm tracking-widest select-all">' + escapeHtml(data.user_code) + '</code>' +
-          '<button onclick="navigator.clipboard.writeText(' + JSON.stringify(String(data.user_code)) + ')" class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-[10px] text-slate-300 cursor-pointer">Copy</button>' +
-          '<a href="' + safeUri + '" target="_blank" rel="noopener noreferrer" class="px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-[10px] text-white font-semibold">Open GitHub</a>' +
-          '</div></div>' +
-          '<button onclick="cancelDeviceLogin()" class="text-slate-500 hover:text-slate-300 text-xs cursor-pointer">✕</button></div>';
 
+        loadAuthStatus();
+
+        // Start background polling
         clearInterval(devicePollTimer);
         devicePollTimer = setInterval(async function () {
           try {
-            const res = await fetch('/api/auth/status', { cache: 'no-store' });
-            const status = await res.json();
+            const statusRes = await fetch('/api/auth/status', { cache: 'no-store' });
+            const status = await statusRes.json();
             if (status.authenticated) {
               clearInterval(devicePollTimer);
-              deviceFlowActive = false;
+              currentActiveCode = '';
               loadAuthStatus();
             } else if (status.error) {
               clearInterval(devicePollTimer);
-              deviceFlowActive = false;
+              currentActiveCode = '';
               loadAuthStatus();
             }
           } catch (_) {}
         }, 3000);
+
       } catch (err) {
-        deviceFlowActive = false;
-        widget.innerHTML = '<span class="text-xs text-red-400">❌ ' + escapeHtml(err && err.message ? err.message : 'GitHub login failed') + '</span>';
+        currentActiveCode = '';
+        if (widget) widget.innerHTML = '<span class="text-xs text-red-400">❌ ' + escapeHtml(err && err.message ? err.message : 'Login failed') + '</span>';
         setTimeout(loadAuthStatus, 3000);
       }
     }
 
+    function reopenDeviceModal() {
+      const modal = document.getElementById('deviceCodeModal');
+      if (modal) modal.classList.remove('hidden');
+    }
+
     async function cancelDeviceLogin() {
       clearInterval(devicePollTimer);
-      deviceFlowActive = false;
+      currentActiveCode = '';
+      const modal = document.getElementById('deviceCodeModal');
+      if (modal) modal.classList.add('hidden');
       await fetch('/api/auth/device', { method: 'DELETE' }).catch(function () {});
       loadAuthStatus();
     }
 
     async function logout() {
       clearInterval(devicePollTimer);
-      deviceFlowActive = false;
+      currentActiveCode = '';
       await fetch('/api/auth/logout', { method: 'POST' });
       loadAuthStatus();
     }
 
     loadAuthStatus();
 
-    // ── GitHub Audit ────────────────────────────────────────────────────────
+    // ── GitHub Audit Report ─────────────────────────────────────────────────
     async function runGitHubAudit() {
       const repoUrl = document.getElementById("githubRepoInput").value.trim();
       if (!repoUrl) return;
       const btn = document.getElementById("githubAuditBtn");
       btn.disabled = true;
-      btn.innerText = "Analyzing...";
+      btn.innerHTML = '<span class="animate-pulse">Analyzing...</span>';
 
       try {
         const res = await fetch("/api/github", {
@@ -598,7 +786,7 @@ function getEmbeddedDashboardHtml(): string {
       const targetPath = document.getElementById("localPathInput").value.trim() || ".";
       const btn = document.getElementById("localScanBtn");
       btn.disabled = true;
-      btn.innerText = "Scanning AST...";
+      btn.innerHTML = '<span class="animate-pulse">Scanning AST...</span>';
 
       try {
         const res = await fetch("/api/scan", {
@@ -625,51 +813,53 @@ function getEmbeddedDashboardHtml(): string {
       const { repo, commits, pullRequests, qaScore, dependencies, languages } = report;
 
       container.innerHTML = \`
-        <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 p-5 rounded-xl bg-slate-950/80 border border-slate-800">
+        <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 p-5 rounded-2xl bg-gradient-to-r from-slate-900 to-slate-950 border border-slate-800">
           <div>
             <div class="flex items-center gap-2">
-              <h3 class="text-base font-bold text-slate-100">\${repo.fullName}</h3>
-              <a href="\${repo.htmlUrl}" target="_blank" class="text-blue-400 hover:underline text-xs">↗ View on GitHub</a>
+              <h3 class="text-base font-bold text-slate-100">\${escapeHtml(repo.fullName)}</h3>
+              <a href="\${escapeHtml(repo.htmlUrl)}" target="_blank" class="text-blue-400 hover:underline text-xs flex items-center gap-1">
+                <span>View on GitHub</span> <span>↗</span>
+              </a>
             </div>
-            <p class="text-xs text-slate-400 mt-1">\${repo.description}</p>
+            <p class="text-xs text-slate-400 mt-1">\${escapeHtml(repo.description || 'No description provided')}</p>
           </div>
           <div class="flex items-center gap-3">
             <div class="text-right">
               <span class="text-xs text-slate-400 block">QA Health Score</span>
-              <span class="text-lg font-bold text-emerald-400">\${qaScore.totalScore}/100 [Grade: \${qaScore.grade}]</span>
+              <span class="text-xl font-extrabold text-emerald-400">\${qaScore.totalScore}/100 [Grade: \${qaScore.grade}]</span>
             </div>
           </div>
         </div>
 
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div class="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
-            <span class="text-[10px] text-slate-400 block">Community Stars</span>
-            <span class="text-sm font-bold text-yellow-400 mt-0.5 block">⭐ \${repo.stars.toLocaleString()}</span>
+          <div class="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80">
+            <span class="text-[10px] text-slate-400 block font-medium">Community Stars</span>
+            <span class="text-sm font-bold text-yellow-400 mt-1 block">⭐ \${repo.stars.toLocaleString()}</span>
           </div>
-          <div class="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
-            <span class="text-[10px] text-slate-400 block">PR Merge Rate</span>
-            <span class="text-sm font-bold text-blue-400 mt-0.5 block">\${pullRequests.mergeRatePercent}%</span>
+          <div class="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80">
+            <span class="text-[10px] text-slate-400 block font-medium">PR Merge Rate</span>
+            <span class="text-sm font-bold text-blue-400 mt-1 block">\${pullRequests.mergeRatePercent}%</span>
           </div>
-          <div class="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
-            <span class="text-[10px] text-slate-400 block">Direct Packages</span>
-            <span class="text-sm font-bold text-emerald-400 mt-0.5 block">\${dependencies.totalDirectDependencies} Packages</span>
+          <div class="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80">
+            <span class="text-[10px] text-slate-400 block font-medium">Direct Packages</span>
+            <span class="text-sm font-bold text-emerald-400 mt-1 block">\${dependencies.totalDirectDependencies} Packages</span>
           </div>
-          <div class="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
-            <span class="text-[10px] text-slate-400 block">Last Commit</span>
-            <span class="text-sm font-bold text-purple-400 mt-0.5 block">\${commits.lastCommitDate ? commits.lastCommitDate.slice(0, 10) : 'Recent'}</span>
+          <div class="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80">
+            <span class="text-[10px] text-slate-400 block font-medium">Last Commit</span>
+            <span class="text-sm font-bold text-purple-400 mt-1 block">\${commits.lastCommitDate ? commits.lastCommitDate.slice(0, 10) : 'Recent'}</span>
           </div>
         </div>
 
-        <div class="p-5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3">
+        <div class="p-5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-3">
           <div class="flex items-center justify-between">
             <span class="text-xs font-semibold text-slate-200">Official GitHub README Badge Markdown:</span>
-            <button onclick="navigator.clipboard.writeText('\${qaScore.badgeMarkdown.replace(/'/g, "\\\\'")}'); alert('Badge Markdown Copied!');"
-              class="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white transition">
-              Copy Badge Markdown
+            <button onclick="copyTextToClipboard(this.getAttribute('data-badge'), this)" data-badge="\${escapeHtml(qaScore.badgeMarkdown)}"
+              class="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white transition flex items-center gap-1 cursor-pointer">
+              <span>📋</span> <span>Copy Badge Markdown</span>
             </button>
           </div>
-          <code class="block p-3 rounded-lg bg-black/80 border border-slate-800 font-mono text-xs text-emerald-400 select-all break-all">
-            \${qaScore.badgeMarkdown}
+          <code class="block p-3.5 rounded-xl bg-black/90 border border-slate-800 font-mono text-xs text-emerald-400 select-all break-all shadow-inner">
+            \${escapeHtml(qaScore.badgeMarkdown)}
           </code>
         </div>
       \`;
@@ -681,50 +871,49 @@ function getEmbeddedDashboardHtml(): string {
       container.classList.remove("hidden");
 
       const { summary, projectMetadata, dependencies } = report;
-
       const depEntries = Object.entries(dependencies || {});
 
       container.innerHTML = \`
-        <div class="flex items-center justify-between p-5 rounded-xl bg-slate-950/80 border border-slate-800">
+        <div class="flex items-center justify-between p-5 rounded-2xl bg-gradient-to-r from-slate-900 to-slate-950 border border-slate-800">
           <div>
-            <h3 class="text-base font-bold text-slate-100">\${projectMetadata.name} v\${projectMetadata.version}</h3>
-            <p class="text-xs text-slate-400 font-mono mt-0.5">Path: \${projectMetadata.path || '.'}</p>
+            <h3 class="text-base font-bold text-slate-100">\${escapeHtml(projectMetadata.name)} v\${escapeHtml(projectMetadata.version)}</h3>
+            <p class="text-xs text-slate-400 font-mono mt-0.5">Path: \${escapeHtml(projectMetadata.path || '.')}</p>
           </div>
           <div class="text-right">
             <span class="text-xs text-slate-400 block">Breaking Risk Score</span>
-            <span class="text-lg font-bold text-emerald-400">\${summary.averageRiskScore}/100 (SAFE)</span>
+            <span class="text-xl font-extrabold text-emerald-400">\${summary.averageRiskScore}/100 (SAFE)</span>
           </div>
         </div>
 
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div class="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
-            <span class="text-[10px] text-slate-400 block">Total Packages</span>
-            <span class="text-sm font-bold text-slate-100 mt-0.5 block">\${summary.totalDependencies}</span>
+          <div class="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80">
+            <span class="text-[10px] text-slate-400 block font-medium">Total Packages</span>
+            <span class="text-sm font-bold text-slate-100 mt-1 block">\${summary.totalDependencies}</span>
           </div>
-          <div class="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
-            <span class="text-[10px] text-slate-400 block">Direct Dependencies</span>
-            <span class="text-sm font-bold text-blue-400 mt-0.5 block">\${summary.directCount}</span>
+          <div class="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80">
+            <span class="text-[10px] text-slate-400 block font-medium">Direct Dependencies</span>
+            <span class="text-sm font-bold text-blue-400 mt-1 block">\${summary.directCount}</span>
           </div>
-          <div class="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
-            <span class="text-[10px] text-slate-400 block">Scanned Code Files</span>
-            <span class="text-sm font-bold text-emerald-400 mt-0.5 block">\${summary.scannedFiles}</span>
+          <div class="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80">
+            <span class="text-[10px] text-slate-400 block font-medium">Scanned Code Files</span>
+            <span class="text-sm font-bold text-emerald-400 mt-1 block">\${summary.scannedFiles}</span>
           </div>
-          <div class="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
-            <span class="text-[10px] text-slate-400 block">Ghost Dependencies</span>
-            <span class="text-sm font-bold text-purple-400 mt-0.5 block">\${summary.ghostDependenciesCount}</span>
+          <div class="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80">
+            <span class="text-[10px] text-slate-400 block font-medium">Ghost Dependencies</span>
+            <span class="text-sm font-bold text-purple-400 mt-1 block">\${summary.ghostDependenciesCount}</span>
           </div>
         </div>
 
-        <div class="space-y-2">
-          <h4 class="text-xs font-bold text-slate-300">Dependencies List & Risk Levels:</h4>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
-            \${depEntries.slice(0, 12).map(([name, node]) => \`
-              <div class="p-3 rounded-lg bg-slate-950/60 border border-slate-800 flex items-center justify-between">
+        <div class="space-y-3 pt-2">
+          <h4 class="text-xs font-bold text-slate-300">Dependencies & Migration Risk:</h4>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+            \${depEntries.slice(0, 14).map(([name, node]) => \`
+              <div class="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 transition flex items-center justify-between">
                 <div>
-                  <span class="text-xs font-semibold text-slate-200">\${name}</span>
-                  <span class="text-[10px] font-mono text-slate-400 block">v\${node.version} \${node.latestVersion ? '➔ v' + node.latestVersion : ''}</span>
+                  <span class="text-xs font-semibold text-slate-200">\${escapeHtml(name)}</span>
+                  <span class="text-[10px] font-mono text-slate-400 block mt-0.5">v\${escapeHtml(node.version)} \${node.latestVersion ? '➔ v' + escapeHtml(node.latestVersion) : ''}</span>
                 </div>
-                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                <span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-mono">
                   Risk: \${node.risk ? node.risk.score : 0}/100
                 </span>
               </div>
